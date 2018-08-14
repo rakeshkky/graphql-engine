@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -11,11 +12,11 @@
 module Hasura.RQL.DDL.Relationship where
 
 import qualified Database.PG.Query          as Q
+import           Hasura.Prelude
 import           Hasura.RQL.DDL.Deps
 import           Hasura.RQL.DDL.Permission  (purgePerm)
 import           Hasura.RQL.Types
 import           Hasura.SQL.Types
-import           Hasura.Prelude
 
 import           Data.Aeson.Casing
 import           Data.Aeson.TH
@@ -67,27 +68,32 @@ instance ToJSON RelManualConfig where
            , "column_mapping" .= cm
            ]
 
-data RelUsing a b
+data RelUsing a b c
   = RUFKeyOn a
   | RUManual b
+  | RUFKeyContraint c
   deriving (Show, Eq, Lift)
 
-instance (ToJSON a, ToJSON b) => ToJSON (RelUsing a b) where
+instance (ToJSON a, ToJSON b, ToJSON c) => ToJSON (RelUsing a b c) where
   toJSON (RUFKeyOn fkey) =
     object [ "foreign_key_constraint_on" .= fkey ]
   toJSON (RUManual manual) =
     object [ "manual_configuration" .= manual ]
+  toJSON (RUFKeyContraint cons) =
+    object [ "foreign_key_constraint_name" .= cons]
 
-instance (FromJSON a, FromJSON b) => FromJSON (RelUsing a b) where
+instance (FromJSON a, FromJSON b, FromJSON c) => FromJSON (RelUsing a b c) where
   parseJSON (Object o) = do
     let fkeyOnM = HM.lookup "foreign_key_constraint_on" o
         manualM = HM.lookup "manual_configuration" o
-    let msgFrag = "one of foreign_key_constraint_on/manual_configuration should be present"
-    case (fkeyOnM, manualM) of
-      (Nothing, Nothing) -> fail $ "atleast " <> msgFrag
-      (Just a, Nothing)  -> RUFKeyOn <$> parseJSON a
-      (Nothing, Just b)  -> RUManual <$> parseJSON b
-      _                  -> fail $ "only " <> msgFrag
+        fkeyConsM = HM.lookup "foreign_key_constraint_name" o
+    let msgFrag = "one of foreign_key_constraint_on/manual_configuration/foreign_key_constraint_name should be present"
+    case (fkeyOnM, manualM, fkeyConsM) of
+      (Nothing, Nothing, Nothing) -> fail $ "atleast " <> msgFrag
+      (Just a, Nothing, Nothing)  -> RUFKeyOn <$> parseJSON a
+      (Nothing, Just b, Nothing)  -> RUManual <$> parseJSON b
+      (Nothing, Nothing, Just c)  -> RUFKeyContraint <$> parseJSON c
+      _                           -> fail $ "only " <> msgFrag
   parseJSON _ =
     fail "using should be an object"
 
@@ -144,10 +150,22 @@ checkForColConfilct tabInfo f =
       ]
     Nothing -> return ()
 
-type ObjRelUsing = RelUsing PGCol ObjRelManualConfig
+type ObjRelUsing = RelUsing PGCol ObjRelManualConfig ConstraintName
 type ObjRelDef = RelDef ObjRelUsing
 
 type CreateObjRel = WithTable ObjRelDef
+
+validateFKeyConstraint :: (QErrM m) => TableInfo -> ConstraintName -> m ()
+validateFKeyConstraint tabInfo constraintName = do
+  let allConstraints = tiConstraints tabInfo
+      isConstrantExist = any checkConstraint allConstraints
+  withPathK "foreign_key_constraint_name" $
+    unless isConstrantExist $ throw400 ConstraintError $
+      "no foreign key constraint exists with name "
+      <> constraintName <<> " on table " <>> tiName tabInfo
+  where
+    checkConstraint (TableConstraint ty n) =
+      ty == CTFOREIGNKEY && n == constraintName
 
 objRelP1
   :: (QErrM m, CacheRM m)
@@ -157,9 +175,10 @@ objRelP1
 objRelP1 tabInfo (RelDef rn ru _) = do
   checkForColConfilct tabInfo (fromRel rn)
   let fim = tiFieldInfoMap tabInfo
-  case ru of
+  withPathK "using" $ case ru of
     RUFKeyOn cn                      -> assertPGCol fim "" cn
     RUManual (ObjRelManualConfig rm) -> validateManualConfig fim rm
+    RUFKeyContraint constraintName   -> validateFKeyConstraint tabInfo constraintName
 
 createObjRelP1
   :: (P1C m)
@@ -180,7 +199,7 @@ objRelP2Setup qt (RelDef rn ru _) = do
                   <> map (\c -> SchemaDependency (SOTableObj refqt $ TOCol c) "rcol") rCols
       return $ RelInfo rn ObjRel (zip lCols rCols) refqt deps
     RUFKeyOn cn -> do
-      res  <- liftTx $ Q.catchE defaultTxErrorHandler $ fetchFKeyDetail cn
+      res  <- liftTx $ Q.catchE defaultTxErrorHandler $ fetchFKeyDetailForColumn cn
       case mapMaybe processRes res of
         [] -> throw400 ConstraintError
                 "no foreign constraint exists on the given column"
@@ -193,10 +212,18 @@ objRelP2Setup qt (RelDef rn ru _) = do
           return $ RelInfo rn ObjRel colMapping refqt deps
         _  -> throw400 ConstraintError
                 "more than one foreign key constraint exists on the given column"
+    RUFKeyContraint cons -> do
+      (refsn, reftn, Q.AltJ colMappingObj)  <- liftTx $
+        Q.catchE defaultTxErrorHandler $ fetchFKeyDetailForConstraint cons
+      let deps = [ SchemaDependency (SOTableObj qt $ TOCons cons) "fkey"]
+          refqt = QualifiedTable refsn reftn
+          colMapping = M.toList colMappingObj
+      void $ askTabInfo refqt
+      return $ RelInfo rn ObjRel colMapping refqt deps
   addFldToCache (fromRel rn) (FIRelationship relInfo) qt
   where
     QualifiedTable sn tn = qt
-    fetchFKeyDetail cn =
+    fetchFKeyDetailForColumn cn =
       Q.listQ [Q.sql|
            SELECT constraint_name, ref_table_table_schema, ref_table, column_mapping
              FROM hdb_catalog.hdb_foreign_key_constraint
@@ -204,6 +231,15 @@ objRelP2Setup qt (RelDef rn ru _) = do
               AND table_name = $2
               AND (column_mapping ->> $3) IS NOT NULL
                 |] (sn, tn, cn) False
+    fetchFKeyDetailForConstraint cons =
+      Q.getRow <$> Q.withQ [Q.sql|
+           SELECT ref_table_table_schema, ref_table, column_mapping
+             FROM hdb_catalog.hdb_foreign_key_constraint
+            WHERE table_schema = $1
+              AND table_name = $2
+              AND constraint_name = $3
+                |] (sn, tn, getConstraintTxt cons) False
+
     processRes (consn, refsn, reftn, mapping) =
       case M.toList (Q.getAltJ mapping) of
       m@[_] -> Just (consn, refsn, reftn, m)
@@ -228,19 +264,27 @@ instance HDBQuery CreateObjRel where
 
   schemaCachePolicy = SCPReload
 
-data ArrRelUsingFKeyOn
-  = ArrRelUsingFKeyOn
+data ArrRelUsingFKeyColumn
+  = ArrRelUsingFKeyColumn
   { arufTable  :: !QualifiedTable
   , arufColumn :: !PGCol
   } deriving (Show, Eq, Lift)
 
-$(deriveJSON (aesonDrop 4 snakeCase){omitNothingFields=True} ''ArrRelUsingFKeyOn)
+$(deriveJSON (aesonDrop 4 snakeCase){omitNothingFields=True} ''ArrRelUsingFKeyColumn)
+
+data ArrRelUsingFKeyConstraint
+  = ArrRelUsingFKeyConstraint
+  { arucTable :: !QualifiedTable
+  , arucName  :: !ConstraintName
+  } deriving (Show, Eq, Lift)
+
+$(deriveJSON (aesonDrop 4 snakeCase){omitNothingFields=True} ''ArrRelUsingFKeyConstraint)
 
 newtype ArrRelManualConfig =
   ArrRelManualConfig { getArrRelMapping :: RelManualConfig }
   deriving (Show, Eq, FromJSON, ToJSON, Lift)
 
-type ArrRelUsing = RelUsing ArrRelUsingFKeyOn ArrRelManualConfig
+type ArrRelUsing = RelUsing ArrRelUsingFKeyColumn ArrRelManualConfig ArrRelUsingFKeyConstraint
 type ArrRelDef = RelDef ArrRelUsing
 type CreateArrRel = WithTable ArrRelDef
 
@@ -248,7 +292,7 @@ createArrRelP1 :: (P1C m) => CreateArrRel -> m ()
 createArrRelP1 (WithTable qt rd) = do
   adminOnly
   tabInfo    <- askTabInfo qt
-  arrRelP1 tabInfo rd
+  withPathK "using" $ arrRelP1 tabInfo rd
 
 arrRelP1
   :: (QErrM m, CacheRM m)
@@ -257,13 +301,16 @@ arrRelP1 tabInfo (RelDef rn ru _) = do
   checkForColConfilct tabInfo (fromRel rn)
   let fim = tiFieldInfoMap tabInfo
   case ru of
-    RUFKeyOn (ArrRelUsingFKeyOn remoteQt rcn) -> do
+    RUFKeyOn (ArrRelUsingFKeyColumn remoteQt rcn) -> do
       remoteTabInfo <- askTabInfo remoteQt
       let rfim = tiFieldInfoMap remoteTabInfo
       -- Check if 'using' column exists
       assertPGCol rfim "" rcn
     RUManual (ArrRelManualConfig rm) ->
       validateManualConfig fim rm
+    RUFKeyContraint (ArrRelUsingFKeyConstraint remoteQt remoteConsName) -> do
+      remoteTabInfo <- askTabInfo remoteQt
+      validateFKeyConstraint remoteTabInfo remoteConsName
 
 arrRelP2Setup :: (P2C m) => QualifiedTable -> ArrRelDef -> m ()
 arrRelP2Setup qt (RelDef rn ru _) = do
@@ -274,7 +321,7 @@ arrRelP2Setup qt (RelDef rn ru _) = do
           deps  = map (\c -> SchemaDependency (SOTableObj qt $ TOCol c) "lcol") lCols
                   <> map (\c -> SchemaDependency (SOTableObj refqt $ TOCol c) "rcol") rCols
       return $ RelInfo rn ArrRel (zip lCols rCols) refqt deps
-    RUFKeyOn (ArrRelUsingFKeyOn refqt refCol) -> do
+    RUFKeyOn (ArrRelUsingFKeyColumn refqt refCol) -> do
       let QualifiedTable refSn refTn = refqt
       res <- liftTx $ Q.catchE defaultTxErrorHandler $
         fetchFKeyDetail refSn refTn refCol
@@ -288,6 +335,13 @@ arrRelP2Setup qt (RelDef rn ru _) = do
           return $ RelInfo rn ArrRel (map swap mapping) refqt deps
         _  -> throw400 ConstraintError
                 "more than one foreign key constraint exists on the given column"
+    RUFKeyContraint (ArrRelUsingFKeyConstraint refqt refCons) -> do
+      let QualifiedTable refSn refTn = refqt
+      Q.AltJ mappingObj <- liftTx $ Q.catchE defaultTxErrorHandler $
+        fetchFKeyDetailForConstraint refSn refTn refCons
+      let deps = [ SchemaDependency (SOTableObj refqt $ TOCons refCons) "remote_fkey"]
+          mapping = M.toList mappingObj
+      return $ RelInfo rn ArrRel (map swap mapping) refqt deps
   addFldToCache (fromRel rn) (FIRelationship relInfo) qt
   where
     QualifiedTable sn tn = qt
@@ -300,6 +354,17 @@ arrRelP2Setup qt (RelDef rn ru _) = do
               AND ref_table_table_schema = $4
               AND ref_table = $5
                 |] (refsn, reftn, refcn, sn, tn) False
+    fetchFKeyDetailForConstraint refsn reftn refCons =
+      runIdentity . Q.getRow <$> Q.withQ [Q.sql|
+           SELECT column_mapping
+             FROM hdb_catalog.hdb_foreign_key_constraint
+            WHERE table_schema = $1
+              AND table_name = $2
+              AND constraint_name = $3
+              AND ref_table_table_schema = $4
+              AND ref_table = $5
+                |] (refsn, reftn, getConstraintTxt refCons, sn, tn) False
+
     processRes (consn, mapping) =
       case M.toList (Q.getAltJ mapping) of
       m@[_] -> Just (consn, m)

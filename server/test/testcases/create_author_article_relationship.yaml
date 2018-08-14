@@ -10,6 +10,12 @@ query:
       name: author
       using:
         foreign_key_constraint_on: author_id
+  - type: create_object_relationship
+    args:
+      table: article
+      name: author_obj_rel
+      using:
+        foreign_key_constraint_name: article_author_id_fkey
   - type: create_array_relationship
     args:
       table: author
@@ -18,3 +24,11 @@ query:
         foreign_key_constraint_on:
           table: article
           column: author_id
+  - type: create_array_relationship
+    args:
+      table: author
+      name: articles_arr_rel
+      using:
+        foreign_key_constraint_name:
+          table: article
+          name: article_author_id_fkey

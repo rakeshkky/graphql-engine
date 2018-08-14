@@ -42,6 +42,7 @@ querySpecFiles =
   , "create_author_article_permissions.yaml"
   , "create_address_resident_relationship_error.yaml"
   , "create_user_permission_address.yaml"
+  , "create_author_article_relationship_error_01.yaml"
   ]
 
 gqlSpecFiles :: [FilePath]
