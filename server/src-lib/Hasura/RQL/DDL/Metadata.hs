@@ -42,7 +42,6 @@ import qualified Data.List                    as L
 import qualified Data.Text                    as T
 
 import           Hasura.Prelude
-import           Hasura.RQL.DDL.Schema.Table  (buildSchemaCache)
 import           Hasura.RQL.DDL.Utils
 import           Hasura.RQL.Types
 import           Hasura.SQL.Types
@@ -360,7 +359,7 @@ instance HDBQuery ReloadMetadata where
   phaseTwo _ _ = do
     sc <- liftTx $ do
       Q.unitQE defaultTxErrorHandler clearHdbViews () False
-      buildSchemaCache
+      DT.buildSchemaCache
     writeSchemaCache sc
     return successMsg
 
