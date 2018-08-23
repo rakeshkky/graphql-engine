@@ -45,13 +45,13 @@ module Hasura.RQL.Types
        , module R
        ) where
 
+import           Hasura.Prelude
 import           Hasura.RQL.Types.Common      as R
 import           Hasura.RQL.Types.DML         as R
 import           Hasura.RQL.Types.Error       as R
 import           Hasura.RQL.Types.Permission  as R
 import           Hasura.RQL.Types.SchemaCache as R
 import           Hasura.SQL.Types
-import           Hasura.Prelude
 
 import qualified Database.PG.Query            as Q
 

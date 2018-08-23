@@ -140,7 +140,7 @@ clearInsInfra vn =
 type DropInsPerm = DropPerm InsPerm
 
 dropInsPermP2 :: (P2C m) => DropInsPerm -> QualifiedTable -> m ()
-dropInsPermP2 = dropPermP2
+dropInsPermP2 dip qt = dropPermP2 dip $ DPP1Valid qt
 
 type instance PermInfo InsPerm = InsPermInfo
 
@@ -157,8 +157,10 @@ instance IsPerm InsPerm where
     liftTx $ buildInsInfra qt permInfo $
       map pgiName $ getCols $ tiFieldInfoMap tabInfo
 
-  buildDropPermP1Res dp =
-    ipiView <$> dropPermP1 dp
+  buildDropPermP1Res dp = do
+    isValid <- isValidPerm dp
+    if isValid then (DPP1Valid . ipiView) <$> dropPermP1 dp
+    else return DPP1InValid
 
   dropPermP2Setup _ vn =
     liftTx $ clearInsInfra vn
@@ -208,7 +210,7 @@ type DropSelPerm = DropPerm SelPerm
 type instance PermInfo SelPerm = SelPermInfo
 
 dropSelPermP2 :: (P2C m) => DropSelPerm -> m ()
-dropSelPermP2 dp = dropPermP2 dp ()
+dropSelPermP2 dp = dropPermP2 dp $ DPP1Valid ()
 
 instance IsPerm SelPerm where
 
@@ -219,8 +221,11 @@ instance IsPerm SelPerm where
   buildPermInfo ti (PermDef _ a _) =
     buildSelPermInfo ti a
 
-  buildDropPermP1Res =
-    void . dropPermP1
+  buildDropPermP1Res dp = do
+    isValid <- isValidPerm dp
+    if isValid then fmap DPP1Valid $ void $ dropPermP1 dp
+    else return DPP1InValid
+
 
   addPermP2Setup _ _ _ = return ()
 
@@ -267,7 +272,7 @@ type instance PermInfo UpdPerm = UpdPermInfo
 type DropUpdPerm = DropPerm UpdPerm
 
 dropUpdPermP2 :: (P2C m) => DropUpdPerm -> m ()
-dropUpdPermP2 dp = dropPermP2 dp ()
+dropUpdPermP2 dp = dropPermP2 dp $ DPP1Valid ()
 
 instance IsPerm UpdPerm where
 
@@ -280,8 +285,10 @@ instance IsPerm UpdPerm where
 
   addPermP2Setup _ _ _ = return ()
 
-  buildDropPermP1Res =
-    void . dropPermP1
+  buildDropPermP1Res dp = do
+    isValid <- isValidPerm dp
+    if isValid then fmap DPP1Valid $ void $ dropPermP1 dp
+    else return DPP1InValid
 
   dropPermP2Setup _ _ = return ()
 
@@ -313,7 +320,7 @@ buildDelPermInfo tabInfo (DelPerm fltr) = do
 type DropDelPerm = DropPerm DelPerm
 
 dropDelPermP2 :: (P2C m) => DropDelPerm -> m ()
-dropDelPermP2 dp = dropPermP2 dp ()
+dropDelPermP2 dp = dropPermP2 dp $ DPP1Valid ()
 
 type instance PermInfo DelPerm = DelPermInfo
 
@@ -328,8 +335,10 @@ instance IsPerm DelPerm where
 
   addPermP2Setup _ _ _ = return ()
 
-  buildDropPermP1Res =
-    void . dropPermP1
+  buildDropPermP1Res dp = do
+    isValid <- isValidPerm dp
+    if isValid then fmap DPP1Valid $ void $ dropPermP1 dp
+    else return DPP1InValid
 
   dropPermP2Setup _ _ = return ()
 

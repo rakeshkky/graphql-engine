@@ -8,10 +8,13 @@
 
 module Hasura.Server.App where
 
+import           Control.Arrow                          ((***))
 import           Control.Concurrent.MVar
 import           Data.IORef
 
 import           Data.Aeson                             hiding (json)
+import           Data.Aeson.Casing
+import           Data.Aeson.TH
 import qualified Data.ByteString.Lazy                   as BL
 import qualified Data.HashMap.Strict                    as M
 import qualified Data.Text                              as T
@@ -196,6 +199,26 @@ withLock lk action = do
 --     headers = M.toList $ rqleHeaders expQuery
 --     userInfo = UserInfo role headers
 
+data CurrentStateResp
+  = CurrentStateResp
+  { csrIsValid        :: !Bool
+  , csrInvalidObjects :: !(Maybe [InvalidCacheObj])
+  } deriving (Show, Eq)
+$(deriveToJSON (aesonDrop 3 snakeCase){omitNothingFields=True} ''CurrentStateResp)
+
+v1CurrentState :: Handler BL.ByteString
+v1CurrentState = do
+  onlyAdmin
+  scRef <- scCacheRef . hcServerCtx <$> ask
+  (schemaCache, _) <- liftIO $ readIORef scRef
+  let invalidObjs = scInvalidObjects schemaCache
+      isValid = null invalidObjs
+  bool (invalidResp invalidObjs) validResp isValid
+  where
+    returnResp r = return $ encode r
+    validResp = returnResp $ CurrentStateResp True Nothing
+    invalidResp objs = returnResp $ CurrentStateResp False $ Just objs
+
 v1QueryHandler :: RQLQuery -> Handler BL.ByteString
 v1QueryHandler query = do
   lk <- scCacheLock . hcServerCtx <$> ask
@@ -314,6 +337,8 @@ httpApp mRootDir corsCfg serverCtx enableConsole = do
       uncurry setHeader jsonHeader
       lazyBytes $ encode $ object [ "version" .= currentVersion ]
 
+    get "v1/current_state" $ mkSpockAction encodeQErr serverCtx v1CurrentState
+
     get    ("v1/template" <//> var) tmpltGetOrDeleteH
     post   ("v1/template" <//> var) tmpltPutOrPostH
     put    ("v1/template" <//> var) tmpltPutOrPostH
@@ -360,7 +385,7 @@ httpApp mRootDir corsCfg serverCtx enableConsole = do
     tmpltArgsFromQueryParams = do
       qparams <- params
       return $ M.fromList $ flip map qparams $
-        \(a, b) -> (TemplateParam a, String b)
+        TemplateParam *** String
 
     mkQTemplateAction tmpltName tmpltArgs =
       v1QueryHandler $ RQExecuteQueryTemplate $

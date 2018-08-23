@@ -9,6 +9,7 @@
 
 module Hasura.RQL.Types.SchemaCache
        ( TableCache
+       , InvalidCacheObj(..)
        , SchemaCache(..)
        , emptySchemaCache
        , TableInfo(..)
@@ -75,6 +76,17 @@ module Hasura.RQL.Types.SchemaCache
        , getDependentPermsOfTable
        , getDependentRelsOfTable
        , isDependentOn
+
+       , addInvalidTable
+       , addInvalidRel
+       , addInvalidPerm
+       , findTable
+       , findRel
+       , findPerm
+       , isInvalidTable
+       , isInvalidRel
+       , isInvalidPerm
+       , deleteInvalidSchemaObj
        ) where
 
 import qualified Database.PG.Query           as Q
@@ -382,10 +394,50 @@ mkTableInfo tn isSystemDefined rawCons cols =
 
 type TableCache = M.HashMap QualifiedTable TableInfo -- info of all tables
 
+data InvalidRelation
+  = InvalidRelation
+  { irTable :: !QualifiedTable
+  , irName  :: !RelName
+  , irType  :: !RelType
+  , irDef   :: !Value
+  } deriving (Show, Eq)
+
+$(deriveToJSON (aesonDrop 2 snakeCase) ''InvalidRelation)
+
+data InvalidPermission
+  = InvalidPermission
+  { ipTable :: !QualifiedTable
+  , ipRole  :: !RoleName
+  , ipType  :: !PermType
+  , ipDef   :: !Value
+  } deriving (Show, Eq)
+
+$(deriveToJSON (aesonDrop 2 snakeCase) ''InvalidPermission)
+
+data InvalidSchemaObjId
+  = ISOTable !QualifiedTable
+  | ISORelation !InvalidRelation
+  | ISOPermission !InvalidPermission
+  deriving (Show, Eq)
+
+$(deriveToJSON
+  defaultOptions { constructorTagModifier = snakeCase . drop 3
+                 , sumEncoding = TaggedObject "type" "detail"
+                 }
+   ''InvalidSchemaObjId)
+
+data InvalidCacheObj
+  = InvalidCacheObj
+  { icObjectId :: !InvalidSchemaObjId
+  , icError    :: !T.Text
+  } deriving (Show, Eq)
+$(deriveToJSON (aesonDrop 2 snakeCase) ''InvalidCacheObj)
+
 data SchemaCache
   = SchemaCache
-  { scTables     :: !TableCache
-  , scQTemplates :: !QTemplateCache
+  { scTables         :: !TableCache
+  , scQTemplates     :: !QTemplateCache
+  , scInvalidObjects :: ![InvalidCacheObj]
   } deriving (Show, Eq)
 
 $(deriveToJSON (aesonDrop 2 snakeCase) ''SchemaCache)
@@ -434,7 +486,7 @@ delQTemplateFromCache qtn = do
 --   askSchemaCache = get
 
 emptySchemaCache :: SchemaCache
-emptySchemaCache = SchemaCache (M.fromList []) (M.fromList [])
+emptySchemaCache = SchemaCache (M.fromList []) (M.fromList []) []
 
 modTableCache :: (CacheRWM m) => TableCache -> m ()
 modTableCache tc = do
@@ -652,3 +704,55 @@ getDependentPerms' rsnFn objId (RolePermInfo mipi mspi mupi mdpi) =
     toPermRow :: forall a. (CachedSchemaObj a) => PermType -> a -> Maybe PermType
     toPermRow pt =
       bool Nothing (Just pt) . isDependentOn rsnFn objId
+
+-- invalid cache related
+addInvalidSchemaObj :: (CacheRWM m) => InvalidSchemaObjId -> QErr -> m ()
+addInvalidSchemaObj objId e = do
+  sc <- askSchemaCache
+  let obj = InvalidCacheObj objId $ qeError e
+  writeSchemaCache (sc {scInvalidObjects = obj:scInvalidObjects sc})
+
+deleteInvalidSchemaObj :: (CacheRWM m) => (InvalidCacheObj -> Bool) -> m ()
+deleteInvalidSchemaObj objFinder = do
+  sc <- askSchemaCache
+  let invalidObjs = filter (not . objFinder) $ scInvalidObjects sc
+  writeSchemaCache (sc {scInvalidObjects = invalidObjs})
+
+findTable :: QualifiedTable -> InvalidCacheObj -> Bool
+findTable qt (InvalidCacheObj (ISOTable t) _) = t == qt
+findTable _ _                                 = False
+
+findRel :: QualifiedTable -> RelName -> InvalidCacheObj -> Bool
+findRel qt rn (InvalidCacheObj (ISORelation (InvalidRelation t r _ _))_) = t == qt && r == rn
+findRel _ _ _                                                            = False
+
+findPerm :: QualifiedTable -> RoleName -> PermType -> InvalidCacheObj -> Bool
+findPerm qt rn pt (InvalidCacheObj (ISOPermission (InvalidPermission t r ty _)) _) =
+  t == qt && r == rn && pt == ty
+findPerm _ _ _ _ = False
+
+addInvalidTable :: (CacheRWM m) => QualifiedTable -> QErr -> m ()
+addInvalidTable tn = addInvalidSchemaObj tableObj
+  where
+    tableObj = ISOTable tn
+
+addInvalidRel :: (CacheRWM m)
+              => QualifiedTable -> RelName -> RelType -> Value -> QErr -> m ()
+addInvalidRel tn rn rt rDef = addInvalidSchemaObj relObj
+  where
+    relObj = ISORelation $ InvalidRelation tn rn rt rDef
+
+addInvalidPerm :: (CacheRWM m)
+               => QualifiedTable -> RoleName -> PermType -> Value -> QErr -> m ()
+addInvalidPerm tn rn pt pDef = addInvalidSchemaObj permObj
+  where
+    permObj = ISOPermission $ InvalidPermission tn rn pt pDef
+
+isInvalidTable :: QualifiedTable -> [InvalidCacheObj] -> Bool
+isInvalidTable qt = isJust . find (findTable qt)
+
+isInvalidRel :: RelName -> QualifiedTable -> [InvalidCacheObj] -> Bool
+isInvalidRel rn qt = isJust . find (findRel qt rn)
+
+isInvalidPerm :: RoleName -> PermType -> QualifiedTable -> [InvalidCacheObj] -> Bool
+isInvalidPerm rn pt qt = isJust . find (findPerm qt rn pt)

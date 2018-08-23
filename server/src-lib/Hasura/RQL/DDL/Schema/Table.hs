@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveLift                 #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE MultiWayIf                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE QuasiQuotes                #-}
@@ -173,21 +174,25 @@ processTableChanges ti tableDiff = do
     tn = tiName ti
     TableDiff mNewName droppedCols addedCols alteredCols _ = tableDiff
 
+cleanTableFromCatalog :: (MonadTx m) => QualifiedTable -> m ()
+cleanTableFromCatalog qt@(QualifiedTable sn tn) =
+  liftTx $ Q.catchE defaultTxErrorHandler $ do
+    Q.unitQ [Q.sql|
+             DELETE FROM "hdb_catalog"."hdb_relationship"
+             WHERE table_schema = $1 AND table_name = $2
+              |] (sn, tn) False
+    Q.unitQ [Q.sql|
+             DELETE FROM "hdb_catalog"."hdb_permission"
+             WHERE table_schema = $1 AND table_name = $2
+               |] (sn, tn) False
+    delTableFromCatalog qt
+
 processSchemaChanges :: (P2C m) => SchemaDiff -> m ()
 processSchemaChanges schemaDiff = do
   -- Purge the dropped tables
-  forM_ droppedTables $ \qtn@(QualifiedTable sn tn) -> do
-    liftTx $ Q.catchE defaultTxErrorHandler $ do
-      Q.unitQ [Q.sql|
-               DELETE FROM "hdb_catalog"."hdb_relationship"
-               WHERE table_schema = $1 AND table_name = $2
-                |] (sn, tn) False
-      Q.unitQ [Q.sql|
-               DELETE FROM "hdb_catalog"."hdb_permission"
-               WHERE table_schema = $1 AND table_name = $2
-                |] (sn, tn) False
-      delTableFromCatalog qtn
-    delTableFromCache qtn
+  forM_ droppedTables $ \qt -> do
+    cleanTableFromCatalog qt
+    delTableFromCache qt
   -- Get schema cache
   sc <- askSchemaCache
   forM_ alteredTables $ \(oldQtn, tableDiff) -> do
@@ -205,22 +210,45 @@ data UntrackTable =
   } deriving (Show, Eq, Lift)
 $(deriveJSON (aesonDrop 2 snakeCase){omitNothingFields=True} ''UntrackTable)
 
-unTrackExistingTableOrViewP1 :: UntrackTable -> P1 (UntrackTable, TableInfo)
-unTrackExistingTableOrViewP1 ut@(UntrackTable vn _) = do
+data UntrackTableP1Res
+  = UTP1ValidTable !TableInfo !Bool
+  | UTP1InvalidTable !QualifiedTable
+  deriving (Show, Eq)
+
+unTrackExistingTableOrViewP1 :: UntrackTable -> P1 UntrackTableP1Res
+unTrackExistingTableOrViewP1 (UntrackTable vn c) = do
   adminOnly
   rawSchemaCache <- getSchemaCache <$> lift ask
-  case M.lookup vn (scTables rawSchemaCache) of
-    Just ti -> do
-      -- Check if table/view is system defined
-      when (tiSystemDefined ti) $ throw400 NotSupported $
-        vn <<> " is system defined, cannot untrack"
-      return (ut, ti)
-    Nothing -> throw400 AlreadyUntracked $
-      "view/table already untracked : " <>> vn
+  let invalidObjs = scInvalidObjects rawSchemaCache
+  bool (asValidTable rawSchemaCache)
+        asInvalidTable $ isInvalidTable vn invalidObjs
+  where
+    asValidTable sc =
+      case M.lookup vn (scTables sc) of
+        Just ti -> do
+          -- Check if table/view is system defined
+          when (tiSystemDefined ti) $ throw400 NotSupported $
+            vn <<> " is system defined, cannot untrack"
+          return $ UTP1ValidTable ti $ or c
+        Nothing -> throw400 AlreadyUntracked $
+          "view/table already untracked : " <>> vn
+    asInvalidTable =
+      return $ UTP1InvalidTable vn
+
+dropInvalidTable :: (P2C m) => QualifiedTable -> m RespBody
+dropInvalidTable qt = do
+  cleanTableFromCatalog qt
+  deleteInvalidSchemaObj (findTable qt)
+  sc <- liftTx $ do
+    Q.unitQE defaultTxErrorHandler clearHdbViews () False
+    buildSchemaCache
+  writeSchemaCache sc
+  return successMsg
 
 unTrackExistingTableOrViewP2 :: (P2C m)
-                             => UntrackTable -> TableInfo -> m RespBody
-unTrackExistingTableOrViewP2 (UntrackTable vn cascade) tableInfo = do
+                             => UntrackTableP1Res -> m RespBody
+unTrackExistingTableOrViewP2 (UTP1InvalidTable qt) = dropInvalidTable qt
+unTrackExistingTableOrViewP2 (UTP1ValidTable tableInfo cascade) = do
   sc <- askSchemaCache
 
   -- Get Foreign key constraints to this table
@@ -240,7 +268,7 @@ unTrackExistingTableOrViewP2 (UntrackTable vn cascade) tableInfo = do
       allDepIds = relDepIds <> queryTDepIds
 
   -- Report bach with an error if cascade is not set
-  when (allDepIds /= [] && not (or cascade)) $ reportDepsExt allDepIds []
+  when (allDepIds /= [] && not cascade) $ reportDepsExt allDepIds []
 
   -- Purge all the dependants from state
   mapM_ purgeDep allDepIds
@@ -250,6 +278,7 @@ unTrackExistingTableOrViewP2 (UntrackTable vn cascade) tableInfo = do
 
   return successMsg
   where
+    vn = tiName tableInfo
     QualifiedTable sn tn = vn
     getFKeyTables = Q.catchE defaultTxErrorHandler $ Q.listQ [Q.sql|
                     SELECT constraint_name,
@@ -276,10 +305,10 @@ unTrackExistingTableOrViewP2 (UntrackTable vn cascade) tableInfo = do
       SOTableObj qt (TORel $ riName ri)
 
 instance HDBQuery UntrackTable where
-  type Phase1Res UntrackTable = (UntrackTable, TableInfo)
+  type Phase1Res UntrackTable = UntrackTableP1Res
   phaseOne = unTrackExistingTableOrViewP1
 
-  phaseTwo _ = uncurry unTrackExistingTableOrViewP2
+  phaseTwo _ = unTrackExistingTableOrViewP2
 
   schemaCachePolicy = SCPReload
 
@@ -287,25 +316,31 @@ buildSchemaCache :: Q.TxE QErr SchemaCache
 buildSchemaCache = flip execStateT emptySchemaCache $ do
   tables <- lift $ Q.catchE defaultTxErrorHandler fetchTables
   forM_ tables $ \(sn, tn, isSystemDefined) ->
+    flip catchError (addInvalidTable (QualifiedTable sn tn)) $
     modifyErr (\e -> "table " <> tn <<> "; " <> e) $
     trackExistingTableOrViewP2Setup (QualifiedTable sn tn) isSystemDefined
 
   -- Fetch all the relationships
   relationships <- lift $ Q.catchE defaultTxErrorHandler fetchRelationships
 
-  forM_ relationships $ \(sn, tn, rn, rt, Q.AltJ rDef) ->
-    modifyErr (\e -> "table " <> tn <<> "; rel " <> rn <<> "; " <> e) $ case rt of
-    ObjRel -> do
-      using <- decodeValue rDef
-      objRelP2Setup (QualifiedTable sn tn) $ RelDef rn using Nothing
-    ArrRel -> do
-      using <- decodeValue rDef
-      arrRelP2Setup (QualifiedTable sn tn) $ RelDef rn using Nothing
+  forM_ relationships $ \(sn, tn, rn, rt, Q.AltJ rDef) -> do
+    let qt = QualifiedTable sn tn
+    flip catchError (addInvalidRel qt rn rt rDef) $
+      modifyErr (\e -> "table " <> tn <<> "; rel " <> rn <<> "; " <> e) $ case rt of
+      ObjRel -> do
+        using <- decodeValue rDef
+        relValidator qt rn using
+        objRelP2Setup qt $ RelDef rn using Nothing
+      ArrRel -> do
+        using <- decodeValue rDef
+        relValidator qt rn using
+        arrRelP2Setup qt $ RelDef rn using Nothing
 
   -- Fetch all the permissions
   permissions <- lift $ Q.catchE defaultTxErrorHandler fetchPermissions
 
   forM_ permissions $ \(sn, tn, rn, pt, Q.AltJ pDef) ->
+    flip catchError (addInvalidPerm (QualifiedTable sn tn) rn pt pDef) $
     modifyErr (\e -> "table " <> tn <<> "; role " <> rn <<> "; " <> e) $ case pt of
     PTInsert -> permHelper sn tn rn pDef PAInsert
     PTSelect -> permHelper sn tn rn pDef PASelect
@@ -331,6 +366,10 @@ buildSchemaCache = flip execStateT emptySchemaCache $ do
       addPermP2Setup qt permDef p1Res
       addPermToCache qt rn pa p1Res
       -- p2F qt rn p1Res
+
+    relValidator qt rn using = do
+      qCtx <- mkAdminQCtx <$> get
+      void $ liftP1 qCtx $ phaseOne $ WithTable qt $ RelDef rn using Nothing
 
     fetchTables =
       Q.listQ [Q.sql|

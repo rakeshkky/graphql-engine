@@ -70,7 +70,7 @@ assertPermNotDefined roleName pa tableInfo =
 permissionIsDefined
   :: Maybe RolePermInfo -> PermAccessor a -> Bool
 permissionIsDefined rpi pa =
-  isJust $ join $ rpi ^? _Just.(permAccToLens pa)
+  isJust $ join $ rpi ^? _Just.permAccToLens pa
 
 assertPermDefined
   :: (MonadError QErr m)
@@ -191,9 +191,7 @@ getDependentHeaders boolExp = case boolExp of
       _          -> parseOnlyString val
 
     parseOnlyString val = case val of
-      (String t) -> if isXHasuraTxt t
-                    then [T.toLower t]
-                    else []
+      (String t) -> [T.toLower t | isXHasuraTxt t]
       _          -> []
     parseObject o = flip concatMap (M.toList o) $ \(k, v) ->
                              if isRQLOp k
@@ -267,7 +265,7 @@ class (ToJSON a) => IsPerm a where
   buildDropPermP1Res
     :: (QErrM m, CacheRM m, UserInfoM m)
     => DropPerm a
-    -> m (DropPermP1Res a)
+    -> m (DropPermPhase1 a)
 
   dropPermP2Setup
     :: (CacheRWM m, MonadTx m) => DropPerm a -> DropPermP1Res a -> m ()
@@ -279,6 +277,14 @@ class (ToJSON a) => IsPerm a where
   getPermAcc2
     :: DropPerm a -> PermAccessor (PermInfo a)
   getPermAcc2 _ = permAccessor
+
+  isValidPerm :: (CacheRM m) => DropPerm a -> m Bool
+  isValidPerm dp@(DropPerm qt rn) = do
+    sc <- askSchemaCache
+    let invalidObjs = scInvalidObjects sc
+        permTy = permAccToType $ getPermAcc2 dp
+        isInvalid = isInvalidPerm rn permTy qt invalidObjs
+    return $ not isInvalid
 
 addPermP1 :: (QErrM m, CacheRM m, IsPerm a) => TableInfo -> PermDef a -> m (PermInfo a)
 addPermP1 tabInfo pd = do
@@ -317,18 +323,27 @@ dropPermP1 dp@(DropPerm tn rn) = do
 
 dropPermP2
   :: (IsPerm a, QErrM m, CacheRWM m, MonadTx m)
-  => DropPerm a -> DropPermP1Res a -> m ()
-dropPermP2 dp@(DropPerm tn rn) p1Res = do
-  dropPermP2Setup dp p1Res
-  delPermFromCache pa rn tn
-  liftTx $ dropPermFromCatalog tn rn pt
+  => DropPerm a -> DropPermPhase1 a -> m ()
+dropPermP2 dp@(DropPerm tn rn) p1Res =
+  case p1Res of
+    DPP1Valid res -> do
+      dropPermP2Setup dp res
+      delPermFromCache pa rn tn
+      liftTx $ dropPermFromCatalog tn rn pt
+    DPP1InValid -> do
+      liftTx $ dropPermFromCatalog tn rn pt
+      deleteInvalidSchemaObj (findPerm tn rn pt)
   where
     pa = getPermAcc2 dp
     pt = permAccToType pa
 
+data DropPermPhase1 a
+  = DPP1Valid !(DropPermP1Res a)
+  | DPP1InValid
+
 instance (IsPerm a) => HDBQuery (DropPerm a) where
 
-  type Phase1Res (DropPerm a) = DropPermP1Res a
+  type Phase1Res (DropPerm a) = DropPermPhase1 a
 
   phaseOne = buildDropPermP1Res
 

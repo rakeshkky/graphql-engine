@@ -11,10 +11,10 @@
 module Hasura.RQL.DDL.Relationship where
 
 import qualified Database.PG.Query          as Q
-import           Hasura.RQL.DDL.Deps
-import           Hasura.RQL.DDL.Permission  (purgePerm)
 import           Hasura.RQL.Types
+import           Hasura.RQL.DDL.Deps
 import           Hasura.SQL.Types
+import           Hasura.RQL.DDL.Permission   (purgePerm)
 import           Hasura.Prelude
 
 import           Data.Aeson.Casing
@@ -333,17 +333,26 @@ data DropRel
 
 $(deriveJSON (aesonDrop 2 snakeCase){omitNothingFields=True} ''DropRel)
 
-dropRelP1 :: (P1C m) => DropRel -> m [SchemaObjId]
+data DropRelP1Res
+  = DRP1ValidRel ![SchemaObjId]
+  | DRP1InvalidRel !QualifiedTable !RelName
+  deriving (Show, Eq)
+
+dropRelP1 :: (P1C m) => DropRel -> m DropRelP1Res
 dropRelP1 (DropRel qt rn cascade) = do
   adminOnly
-  tabInfo <- askTabInfo qt
-  _       <- askRelType (tiFieldInfoMap tabInfo) rn ""
   sc      <- askSchemaCache
-  let depObjs = getDependentObjs sc relObjId
-  when (depObjs /= [] && not (or cascade)) $ reportDeps depObjs
-  return depObjs
+  let invalidObjs = scInvalidObjects sc
+  bool (asValidRel sc) asInvalidRel $ isInvalidRel rn qt invalidObjs
   where
     relObjId = SOTableObj qt $ TORel rn
+    asValidRel sc = do
+      tabInfo <- askTabInfo qt
+      _       <- askRelType (tiFieldInfoMap tabInfo) rn ""
+      let depObjs = getDependentObjs sc relObjId
+      when (depObjs /= [] && not (or cascade)) $ reportDeps depObjs
+      return $ DRP1ValidRel depObjs
+    asInvalidRel = return $ DRP1InvalidRel qt rn
 
 purgeRelDep :: (P2C m) => SchemaObjId -> m ()
 purgeRelDep (SOTableObj tn (TOPerm rn pt)) =
@@ -351,8 +360,12 @@ purgeRelDep (SOTableObj tn (TOPerm rn pt)) =
 purgeRelDep d = throw500 $ "unexpected dependency of relationship : "
                 <> reportSchemaObj d
 
-dropRelP2 :: (P2C m) => DropRel -> [SchemaObjId] -> m RespBody
-dropRelP2 (DropRel qt rn _) depObjs = do
+dropRelP2 :: (P2C m) => DropRel -> DropRelP1Res -> m RespBody
+dropRelP2 _ (DRP1InvalidRel qt rn) = do
+  liftTx $ delRelFromCatalog qt rn
+  deleteInvalidSchemaObj (findRel qt rn)
+  return successMsg
+dropRelP2 (DropRel qt rn _) (DRP1ValidRel depObjs) = do
   mapM_ purgeRelDep depObjs
   delFldFromCache (fromRel rn) qt
   liftTx $ delRelFromCatalog qt rn
@@ -360,7 +373,7 @@ dropRelP2 (DropRel qt rn _) depObjs = do
 
 instance HDBQuery DropRel where
 
-  type Phase1Res DropRel = [SchemaObjId]
+  type Phase1Res DropRel = DropRelP1Res
   phaseOne = dropRelP1
 
   phaseTwo = dropRelP2
@@ -418,3 +431,4 @@ setRelComment (SetRelComment (QualifiedTable sn tn) rn comment) =
              AND table_name = $3
              AND rel_name = $4
                 |] (comment, sn, tn, rn) True
+
