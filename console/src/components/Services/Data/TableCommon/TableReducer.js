@@ -29,7 +29,9 @@ import {
   REL_RESET,
   REL_SELECTION_CHANGED,
   REL_NAME_CHANGED,
+  CONSTRAINT_NAME_CHANGED,
   REL_ADD_NEW_CLICKED,
+  REL_ADD_FK_BASED_CLICKED,
   REL_SET_MANUAL_COLUMNS,
   REL_ADD_MANUAL_CLICKED,
 } from '../TableRelationships/Actions';
@@ -119,6 +121,23 @@ const modifyReducer = (tableName, schemas, modifyStateOrig, action) => {
         relAdd: {
           ...modifyState.relAdd,
           isManualExpanded: true,
+        },
+      };
+    case REL_ADD_FK_BASED_CLICKED:
+      return {
+        ...modifyState,
+        relAdd: {
+          ...modifyState.relAdd,
+          isFKBasedExpanded: true,
+        },
+      };
+    case CONSTRAINT_NAME_CHANGED:
+      const constraintName = action.constraintName;
+      return {
+        ...modifyState,
+        relAdd: {
+          ...modifyState.relAdd,
+          constraintName: constraintName,
         },
       };
     case REL_NAME_CHANGED:

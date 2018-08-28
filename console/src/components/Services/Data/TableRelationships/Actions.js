@@ -14,16 +14,23 @@ export const REL_SET_RCOL = 'ModifyTable/REL_SET_RCOL';
 export const REL_RESET = 'ModifyTable/REL_RESET';
 export const REL_SELECTION_CHANGED = 'ModifyTable/REL_SELECTION_CHANGED';
 export const REL_NAME_CHANGED = 'ModifyTable/REL_NAME_CHANGED';
+export const CONSTRAINT_NAME_CHANGED = 'ModifyTable/CONSTRAINT_NAME_CHANGED';
 export const REL_ADD_NEW_CLICKED = 'ModifyTable/REL_ADD_NEW_CLICKED';
 export const REL_SET_MANUAL_COLUMNS = 'ModifyTable/REL_SET_MANUAL_COLUMNS';
 export const REL_ADD_MANUAL_CLICKED = 'ModifyTable/REL_ADD_MANUAL_CLICKED';
+export const REL_ADD_FK_BASED_CLICKED = 'ModifyTable/REL_ADD_FK_BASED_CLICKED';
 
 const resetRelationshipForm = () => ({ type: REL_RESET });
 const addNewRelClicked = () => ({ type: REL_ADD_NEW_CLICKED });
 const relManualAddClicked = () => ({ type: REL_ADD_MANUAL_CLICKED });
+const relFKBasedAddClicked = () => ({ type: REL_ADD_FK_BASED_CLICKED });
 const relSelectionChanged = selectedRelationship => ({
   type: REL_SELECTION_CHANGED,
   rel: selectedRelationship,
+});
+const constraintNameChanged = constraintName => ({
+  type: CONSTRAINT_NAME_CHANGED,
+  constraintName,
 });
 const relNameChanged = relName => ({
   type: REL_NAME_CHANGED,
@@ -442,8 +449,10 @@ export {
   relSelectionChanged,
   addRelNewFromStateMigrate,
   relNameChanged,
+  constraintNameChanged,
   resetRelationshipForm,
   relManualAddClicked,
+  relFKBasedAddClicked,
   autoTrackRelations,
   autoAddRelName,
   formRelName,
