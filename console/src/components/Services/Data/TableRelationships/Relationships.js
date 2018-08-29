@@ -17,6 +17,7 @@ import {
   relFKBasedAddClicked,
   relTypeChange,
   addRelViewMigrate,
+  addRelFKConstraint,
 } from './Actions';
 import { findAllFromRel } from '../utils';
 import { showErrorNotification } from '../Notification';
@@ -607,7 +608,7 @@ const AddRelationshipUsingForeignKeyConstraint = ({
     }
   };
   const onAddRelClicked = () => {
-    dispatch(addRelViewMigrate(tableName));
+    dispatch(addRelFKConstraint(tableName));
   };
   return (
     <div>

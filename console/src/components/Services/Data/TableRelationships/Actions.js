@@ -254,6 +254,98 @@ const addRelViewMigrate = tableName => (dispatch, getState) => {
   }
 };
 
+const addRelFKConstraint = tableName => (dispatch, getState) => {
+  const state = getState().tables.modify.relAdd;
+  const currentSchema = getState().tables.currentSchema;
+  const isObjRel = state.isObjRel;
+  const name = state.name;
+  const rTable = state.rTable;
+  const constraintName = state.constraintName;
+
+  const relChangesUp = [
+    {
+      type: isObjRel
+        ? 'create_object_relationship'
+        : 'create_array_relationship',
+      args: {
+        name: name,
+        table: tableName,
+        using: {
+          foreign_key_constraint_name: isObjRel
+            ? constraintName
+            : {
+              name: constraintName,
+              table: rTable,
+            },
+        },
+      },
+    },
+  ];
+  console.log(tableName, relChangesUp);
+  const relChangesDown = [
+    {
+      type: 'drop_relationship',
+      args: {
+        table: { name: tableName, schema: currentSchema },
+        relationship: name,
+      },
+    },
+  ];
+
+  // Apply migrations
+  const migrationName = `create_relationship_${name}_${currentSchema}_table_${tableName}`;
+
+  const requestMsg = 'Adding Relationship...';
+  const successMsg = 'Relationship created';
+  const errorMsg = 'Creating relationship failed';
+
+  const customOnSuccess = () => {};
+  const customOnError = () => {};
+
+  // perform validations and make call
+  if (!name.trim()) {
+    dispatch(
+      showErrorNotification(
+        'Error adding relationship!',
+        'Please select a name for the relationship',
+        '',
+        { custom: 'Relationship name cannot be empty' }
+      )
+    );
+  } else if (!constraintName.trim()) {
+    dispatch(
+      showErrorNotification(
+        'Error adding relationship!',
+        'Please add a constraint name',
+        '',
+        { custom: 'Constraint name cannot be empty' }
+      )
+    );
+  } else if (!gqlPattern.test(name)) {
+    dispatch(
+      showErrorNotification(
+        gqlRelErrorNotif[0],
+        gqlRelErrorNotif[1],
+        gqlRelErrorNotif[2],
+        gqlRelErrorNotif[3]
+      )
+    );
+  } else {
+    makeMigrationCall(
+      dispatch,
+      getState,
+      relChangesUp,
+      relChangesDown,
+      migrationName,
+      customOnSuccess,
+      customOnError,
+      requestMsg,
+      successMsg,
+      errorMsg
+    );
+  }
+};
+
 const sanitizeRelName = arg =>
   arg
     .trim()
@@ -445,6 +537,7 @@ export {
   relTypeChange,
   relRTableChange,
   addRelViewMigrate,
+  addRelFKConstraint,
   relTableChange,
   relSelectionChanged,
   addRelNewFromStateMigrate,
