@@ -87,6 +87,8 @@ data RQLQuery
 
   | RQDumpInternalState !DumpInternalState
 
+  | RQCurrentState !CurrentState
+
   deriving (Show, Eq, Lift)
 
 $(deriveJSON
@@ -181,6 +183,8 @@ queryNeedsReload qi = case qi of
 
   RQDumpInternalState q        -> queryModifiesSchema q
 
+  RQCurrentState q             -> queryModifiesSchema q
+
   RQBulk qs                    -> any queryNeedsReload qs
 
 buildTxAny :: UserInfo
@@ -224,6 +228,8 @@ buildTxAny userInfo sc rq = case rq of
   RQExportMetadata q -> buildTx userInfo sc q
 
   RQDumpInternalState q -> buildTx userInfo sc q
+
+  RQCurrentState q -> buildTx userInfo sc q
 
   RQRunSql q -> buildTx userInfo sc q
 

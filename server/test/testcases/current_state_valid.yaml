@@ -1,0 +1,8 @@
+description: Query to get current state of schema cache
+url: /v1/query
+status: 200
+response:
+  is_valid: true
+query:
+  type: current_state
+  args: {}

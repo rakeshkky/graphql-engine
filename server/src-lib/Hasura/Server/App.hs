@@ -206,19 +206,6 @@ data CurrentStateResp
   } deriving (Show, Eq)
 $(deriveToJSON (aesonDrop 3 snakeCase){omitNothingFields=True} ''CurrentStateResp)
 
-v1CurrentState :: Handler BL.ByteString
-v1CurrentState = do
-  onlyAdmin
-  scRef <- scCacheRef . hcServerCtx <$> ask
-  (schemaCache, _) <- liftIO $ readIORef scRef
-  let invalidObjs = scInvalidObjects schemaCache
-      isValid = null invalidObjs
-  bool (invalidResp invalidObjs) validResp isValid
-  where
-    returnResp r = return $ encode r
-    validResp = returnResp $ CurrentStateResp True Nothing
-    invalidResp objs = returnResp $ CurrentStateResp False $ Just objs
-
 v1QueryHandler :: RQLQuery -> Handler BL.ByteString
 v1QueryHandler query = do
   lk <- scCacheLock . hcServerCtx <$> ask
@@ -336,8 +323,6 @@ httpApp mRootDir corsCfg serverCtx enableConsole = do
     get "v1/version" $ do
       uncurry setHeader jsonHeader
       lazyBytes $ encode $ object [ "version" .= currentVersion ]
-
-    get "v1/current_state" $ mkSpockAction encodeQErr serverCtx v1CurrentState
 
     get    ("v1/template" <//> var) tmpltGetOrDeleteH
     post   ("v1/template" <//> var) tmpltPutOrPostH

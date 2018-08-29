@@ -20,6 +20,7 @@ module Hasura.RQL.DDL.Metadata
   , applyQP2
 
   , DumpInternalState(..)
+  , CurrentState(..)
 
   , ExportMetadata(..)
   , fetchMetadata
@@ -357,5 +358,41 @@ instance HDBQuery DumpInternalState where
   phaseTwo _ _ = do
     sc <- askSchemaCache
     return $ encode sc
+
+  schemaCachePolicy = SCPNoChange
+
+data CurrentStateResp
+  = CurrentStateResp
+  { csrIsValid        :: !Bool
+  , csrInvalidObjects :: !(Maybe [InvalidCacheObj])
+  } deriving (Show, Eq)
+$(deriveToJSON (aesonDrop 3 snakeCase){omitNothingFields=True} ''CurrentStateResp)
+
+reportCurrentState :: (P2C m) => m RespBody
+reportCurrentState = do
+  sc <- askSchemaCache
+  let invalidObjs = scInvalidObjects sc
+      isValid = null invalidObjs
+  bool (invalidResp invalidObjs) validResp isValid
+  where
+    returnResp r = return $ encode r
+    validResp = returnResp $ CurrentStateResp True Nothing
+    invalidResp objs = returnResp $ CurrentStateResp False $ Just objs
+
+data CurrentState
+  = CurrentState
+  deriving (Show, Eq, Lift)
+
+instance FromJSON CurrentState where
+  parseJSON _ = return CurrentState
+
+$(deriveToJSON defaultOptions ''CurrentState)
+
+instance HDBQuery CurrentState where
+
+  type Phase1Res CurrentState = ()
+  phaseOne _ = adminOnly
+
+  phaseTwo _ _ = reportCurrentState
 
   schemaCachePolicy = SCPNoChange
