@@ -19,11 +19,15 @@ export const REL_ADD_NEW_CLICKED = 'ModifyTable/REL_ADD_NEW_CLICKED';
 export const REL_SET_MANUAL_COLUMNS = 'ModifyTable/REL_SET_MANUAL_COLUMNS';
 export const REL_ADD_MANUAL_CLICKED = 'ModifyTable/REL_ADD_MANUAL_CLICKED';
 export const REL_ADD_FK_BASED_CLICKED = 'ModifyTable/REL_ADD_FK_BASED_CLICKED';
+export const REL_CLOSE_ADD_MANUAL = 'ModifyTable/REL_CLOSE_ADD_MANUAL';
+export const REL_CLOSE_FK_BASED = 'ModifyTable/REL_CLOSE_FK_BASED';
 
 const resetRelationshipForm = () => ({ type: REL_RESET });
 const addNewRelClicked = () => ({ type: REL_ADD_NEW_CLICKED });
 const relManualAddClicked = () => ({ type: REL_ADD_MANUAL_CLICKED });
 const relFKBasedAddClicked = () => ({ type: REL_ADD_FK_BASED_CLICKED });
+const closeAddManualRel = () => ({ type: REL_CLOSE_ADD_MANUAL });
+const closeAddFKRel = () => ({ type: REL_CLOSE_FK_BASED });
 const relSelectionChanged = selectedRelationship => ({
   type: REL_SELECTION_CHANGED,
   rel: selectedRelationship,
@@ -546,6 +550,8 @@ export {
   resetRelationshipForm,
   relManualAddClicked,
   relFKBasedAddClicked,
+  closeAddManualRel,
+  closeAddFKRel,
   autoTrackRelations,
   autoAddRelName,
   formRelName,

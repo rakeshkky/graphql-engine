@@ -17,7 +17,9 @@ import {
   relFKBasedAddClicked,
   relTypeChange,
   addRelViewMigrate,
+  closeAddManualRel,
   addRelFKConstraint,
+  closeAddFKRel,
 } from './Actions';
 import { findAllFromRel } from '../utils';
 import { showErrorNotification } from '../Notification';
@@ -488,6 +490,9 @@ const AddManualRelationship = ({
   const onAddRelClicked = () => {
     dispatch(addRelViewMigrate(tableName));
   };
+  const onCloseClicked = () => {
+    dispatch(closeAddManualRel());
+  };
   return (
     <div>
       <div className={styles.subheading_text}> Add a Manual Relationship </div>
@@ -580,6 +585,14 @@ const AddManualRelationship = ({
       >
         Add
       </button>
+      &nbsp;
+      <button
+        className="btn btn-sm btn-default"
+        onClick={onCloseClicked}
+        data-test="table-add-manual-relationship-close"
+      >
+        Close
+      </button>
     </div>
   );
 };
@@ -609,6 +622,9 @@ const AddRelationshipUsingForeignKeyConstraint = ({
   };
   const onAddRelClicked = () => {
     dispatch(addRelFKConstraint(tableName));
+  };
+  const onCloseClicked = () => {
+    dispatch(closeAddFKRel());
   };
   return (
     <div>
@@ -690,9 +706,17 @@ const AddRelationshipUsingForeignKeyConstraint = ({
       <button
         className={styles.yellow_button}
         onClick={onAddRelClicked}
-        data-test="table-add-manual-relationship"
+        data-test="table-add-FK-relationship"
       >
         Add
+      </button>
+      &nbsp;
+      <button
+        className="btn btn-sm btn-default"
+        onClick={onCloseClicked}
+        data-test="table-add-FK-relationship-close"
+      >
+        Close
       </button>
     </div>
   );
