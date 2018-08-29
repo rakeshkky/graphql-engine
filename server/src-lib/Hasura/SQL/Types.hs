@@ -102,7 +102,7 @@ instance ToSQL TableName where
 
 newtype ConstraintName
   = ConstraintName { getConstraintTxt :: T.Text }
-  deriving (Show, Eq, FromJSON, ToJSON, Q.ToPrepArg, Q.FromCol, Hashable, Lift)
+  deriving (Show, Eq, FromJSON, ToJSON, DQuote, Q.ToPrepArg, Q.FromCol, Hashable, Lift)
 
 instance IsIden ConstraintName where
   toIden (ConstraintName t) = Iden t
