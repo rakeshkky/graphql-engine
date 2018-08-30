@@ -79,6 +79,7 @@ const defaultModifyState = {
     rcol: '',
     manualColumns: [],
     isManualExpanded: false,
+    constraintName: '',
   },
   permissionsState: { ...defaultPermissionsState },
   ongoingRequest: false,

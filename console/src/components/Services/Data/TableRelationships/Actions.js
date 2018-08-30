@@ -14,16 +14,27 @@ export const REL_SET_RCOL = 'ModifyTable/REL_SET_RCOL';
 export const REL_RESET = 'ModifyTable/REL_RESET';
 export const REL_SELECTION_CHANGED = 'ModifyTable/REL_SELECTION_CHANGED';
 export const REL_NAME_CHANGED = 'ModifyTable/REL_NAME_CHANGED';
+export const CONSTRAINT_NAME_CHANGED = 'ModifyTable/CONSTRAINT_NAME_CHANGED';
 export const REL_ADD_NEW_CLICKED = 'ModifyTable/REL_ADD_NEW_CLICKED';
 export const REL_SET_MANUAL_COLUMNS = 'ModifyTable/REL_SET_MANUAL_COLUMNS';
 export const REL_ADD_MANUAL_CLICKED = 'ModifyTable/REL_ADD_MANUAL_CLICKED';
+export const REL_ADD_FK_BASED_CLICKED = 'ModifyTable/REL_ADD_FK_BASED_CLICKED';
+export const REL_CLOSE_ADD_MANUAL = 'ModifyTable/REL_CLOSE_ADD_MANUAL';
+export const REL_CLOSE_FK_BASED = 'ModifyTable/REL_CLOSE_FK_BASED';
 
 const resetRelationshipForm = () => ({ type: REL_RESET });
 const addNewRelClicked = () => ({ type: REL_ADD_NEW_CLICKED });
 const relManualAddClicked = () => ({ type: REL_ADD_MANUAL_CLICKED });
+const relFKBasedAddClicked = () => ({ type: REL_ADD_FK_BASED_CLICKED });
+const closeAddManualRel = () => ({ type: REL_CLOSE_ADD_MANUAL });
+const closeAddFKRel = () => ({ type: REL_CLOSE_FK_BASED });
 const relSelectionChanged = selectedRelationship => ({
   type: REL_SELECTION_CHANGED,
   rel: selectedRelationship,
+});
+const constraintNameChanged = constraintName => ({
+  type: CONSTRAINT_NAME_CHANGED,
+  constraintName,
 });
 const relNameChanged = relName => ({
   type: REL_NAME_CHANGED,
@@ -247,6 +258,98 @@ const addRelViewMigrate = tableName => (dispatch, getState) => {
   }
 };
 
+const addRelFKConstraint = tableName => (dispatch, getState) => {
+  const state = getState().tables.modify.relAdd;
+  const currentSchema = getState().tables.currentSchema;
+  const isObjRel = state.isObjRel;
+  const name = state.name;
+  const rTable = state.rTable;
+  const constraintName = state.constraintName;
+
+  const relChangesUp = [
+    {
+      type: isObjRel
+        ? 'create_object_relationship'
+        : 'create_array_relationship',
+      args: {
+        name: name,
+        table: tableName,
+        using: {
+          foreign_key_constraint_name: isObjRel
+            ? constraintName
+            : {
+              name: constraintName,
+              table: rTable,
+            },
+        },
+      },
+    },
+  ];
+  console.log(tableName, relChangesUp);
+  const relChangesDown = [
+    {
+      type: 'drop_relationship',
+      args: {
+        table: { name: tableName, schema: currentSchema },
+        relationship: name,
+      },
+    },
+  ];
+
+  // Apply migrations
+  const migrationName = `create_relationship_${name}_${currentSchema}_table_${tableName}`;
+
+  const requestMsg = 'Adding Relationship...';
+  const successMsg = 'Relationship created';
+  const errorMsg = 'Creating relationship failed';
+
+  const customOnSuccess = () => {};
+  const customOnError = () => {};
+
+  // perform validations and make call
+  if (!name.trim()) {
+    dispatch(
+      showErrorNotification(
+        'Error adding relationship!',
+        'Please select a name for the relationship',
+        '',
+        { custom: 'Relationship name cannot be empty' }
+      )
+    );
+  } else if (!constraintName.trim()) {
+    dispatch(
+      showErrorNotification(
+        'Error adding relationship!',
+        'Please add a constraint name',
+        '',
+        { custom: 'Constraint name cannot be empty' }
+      )
+    );
+  } else if (!gqlPattern.test(name)) {
+    dispatch(
+      showErrorNotification(
+        gqlRelErrorNotif[0],
+        gqlRelErrorNotif[1],
+        gqlRelErrorNotif[2],
+        gqlRelErrorNotif[3]
+      )
+    );
+  } else {
+    makeMigrationCall(
+      dispatch,
+      getState,
+      relChangesUp,
+      relChangesDown,
+      migrationName,
+      customOnSuccess,
+      customOnError,
+      requestMsg,
+      successMsg,
+      errorMsg
+    );
+  }
+};
+
 const sanitizeRelName = arg =>
   arg
     .trim()
@@ -438,12 +541,17 @@ export {
   relTypeChange,
   relRTableChange,
   addRelViewMigrate,
+  addRelFKConstraint,
   relTableChange,
   relSelectionChanged,
   addRelNewFromStateMigrate,
   relNameChanged,
+  constraintNameChanged,
   resetRelationshipForm,
   relManualAddClicked,
+  relFKBasedAddClicked,
+  closeAddManualRel,
+  closeAddFKRel,
   autoTrackRelations,
   autoAddRelName,
   formRelName,

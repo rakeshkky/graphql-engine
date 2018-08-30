@@ -8,13 +8,18 @@ import {
   addRelNewFromStateMigrate,
   relSelectionChanged,
   relNameChanged,
+  constraintNameChanged,
   resetRelationshipForm,
   relTableChange,
   REL_SET_LCOL,
   REL_SET_RCOL,
   relManualAddClicked,
+  relFKBasedAddClicked,
   relTypeChange,
   addRelViewMigrate,
+  closeAddManualRel,
+  addRelFKConstraint,
+  closeAddFKRel,
 } from './Actions';
 import { findAllFromRel } from '../utils';
 import { showErrorNotification } from '../Notification';
@@ -48,11 +53,17 @@ const getRelationshipLine = (isObjRel, lcol, rcol, rTable) => {
   const finalRTable = rTable.name ? rTable.name : rTable;
   return isObjRel ? (
     <span>
-      &nbsp;{lcol}&nbsp;&nbsp;&rarr;&nbsp;&nbsp;{rTable} :: {rcol}
+      &nbsp;
+      {lcol}
+      &nbsp;&nbsp;&rarr;&nbsp;&nbsp;
+      {rTable} :: {rcol}
     </span>
   ) : (
     <span>
-      &nbsp;{finalRTable} :: {rcol}&nbsp;&nbsp;&rarr;&nbsp;&nbsp;{lcol}
+      &nbsp;
+      {finalRTable} :: {rcol}
+      &nbsp;&nbsp;&rarr;&nbsp;&nbsp;
+      {lcol}
     </span>
   );
 };
@@ -402,7 +413,9 @@ const AddRelationship = ({
               {[
                 'Suggested object relationships',
                 'Suggested Array relationships',
-              ].map((s, i) => <th key={i}>{s}</th>)}
+              ].map((s, i) => (
+                <th key={i}>{s}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -484,6 +497,9 @@ const AddManualRelationship = ({
   };
   const onAddRelClicked = () => {
     dispatch(addRelViewMigrate(tableName));
+  };
+  const onCloseClicked = () => {
+    dispatch(closeAddManualRel());
   };
   return (
     <div>
@@ -576,6 +592,139 @@ const AddManualRelationship = ({
         data-test="table-add-manual-relationship"
       >
         Add
+      </button>
+      &nbsp;
+      <button
+        className="btn btn-sm btn-default"
+        onClick={onCloseClicked}
+        data-test="table-add-manual-relationship-close"
+      >
+        Close
+      </button>
+    </div>
+  );
+};
+
+const AddRelationshipUsingForeignKeyConstraint = ({
+  tableName,
+  allSchemas,
+  relAdd,
+  dispatch,
+}) => {
+  const styles = require('../TableModify/Modify.scss');
+  const onTableChange = e => {
+    dispatch(relTableChange(e.target.value));
+  };
+  const onRelNameChange = e => {
+    dispatch(relNameChanged(e.target.value));
+  };
+  const onConstraintNameChange = e => {
+    dispatch(constraintNameChanged(e.target.value));
+  };
+  const onRelTypeChange = e => {
+    if (e.target.value === 'object_rel') {
+      dispatch(relTypeChange('true'));
+    } else {
+      dispatch(relTypeChange('false'));
+    }
+  };
+  const onAddRelClicked = () => {
+    dispatch(addRelFKConstraint(tableName));
+  };
+  const onCloseClicked = () => {
+    dispatch(closeAddFKRel());
+  };
+  return (
+    <div>
+      <div className={styles.subheading_text}>
+        {' '}
+        Add relationship using foreign key constraint{' '}
+      </div>
+      <div className="form-group">
+        <div className={`${styles.relBlockInline} ${styles.relBlockLeft}`}>
+          Relationship Type
+        </div>
+        <div className={`${styles.relBlockInline} ${styles.relBlockRight}`}>
+          <select
+            className="form-control"
+            onChange={onRelTypeChange}
+            data-test="rel-type"
+          >
+            <option key="select_type" value="select_type">
+              Select relationship type
+            </option>
+            <option key="object" value="object_rel">
+              Object Relationship
+            </option>
+            <option key="array" value="array_rel">
+              Array Relationship
+            </option>
+          </select>
+        </div>
+      </div>
+      <div className="form-group">
+        <div className={`${styles.relBlockInline} ${styles.relBlockLeft}`}>
+          Relationship Name
+        </div>
+        <div className={`${styles.relBlockInline} ${styles.relBlockRight}`}>
+          <input
+            onChange={onRelNameChange}
+            className="form-control"
+            placeholder="Enter relationship name"
+            data-test="rel-name"
+          />
+        </div>
+      </div>
+      {!relAdd.isObjRel ? (
+        <div className="form-group">
+          <div className={`${styles.relBlockInline} ${styles.relBlockLeft}`}>
+            Remote Table
+          </div>
+          <div className={`${styles.relBlockInline} ${styles.relBlockRight}`}>
+            <select
+              className="form-control"
+              onChange={onTableChange}
+              data-test="remote-table"
+            >
+              <option key="default_table">Remote Table</option>
+              {allSchemas.map((s, i) => (
+                <option key={i} value={s.table_name}>
+                  {s.table_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ) : (
+        ''
+      )}
+      <div className="form-group">
+        <div className={`${styles.relBlockInline} ${styles.relBlockLeft}`}>
+          Foreign Key Constraint Name
+        </div>
+        <div className={`${styles.relBlockInline} ${styles.relBlockRight}`}>
+          <input
+            onChange={onConstraintNameChange}
+            className="form-control"
+            placeholder="Enter foreign key constraint name"
+            data-test="fk-constraint-name"
+          />
+        </div>
+      </div>
+      <button
+        className={styles.yellow_button}
+        onClick={onAddRelClicked}
+        data-test="table-add-FK-relationship"
+      >
+        Add
+      </button>
+      &nbsp;
+      <button
+        className="btn btn-sm btn-default"
+        onClick={onCloseClicked}
+        data-test="table-add-FK-relationship-close"
+      >
+        Close
       </button>
     </div>
   );
@@ -752,6 +901,37 @@ class Relationships extends Component {
                 data-test="add-manual-relationship"
               >
                 + Add a manual relationship
+              </button>
+            )}
+            <hr />
+          </div>
+        </div>
+        <div className={`${styles.padd_left_remove} container-fluid`}>
+          <div className={`${styles.padd_left_remove} col-xs-8`}>
+            {relAdd.isFKBasedExpanded ? (
+              <div className={styles.activeEdit}>
+                <AddRelationshipUsingForeignKeyConstraint
+                  tableName={tableName}
+                  isObjRel={relAdd.isObjRel}
+                  rTable={relAdd.rTable}
+                  dispatch={dispatch}
+                  lcol={relAdd.lcol}
+                  rcol={relAdd.rcol}
+                  allSchemas={allSchemas}
+                  manualColumns={relAdd.manualColumns}
+                  relAdd={relAdd}
+                />
+              </div>
+            ) : (
+              <button
+                type="submit"
+                className="btn btn-sm btn-default"
+                onClick={() => {
+                  dispatch(relFKBasedAddClicked());
+                }}
+                data-test="add-fk-relationship"
+              >
+                + Add relationship using foreign key constraint
               </button>
             )}
             <hr />
