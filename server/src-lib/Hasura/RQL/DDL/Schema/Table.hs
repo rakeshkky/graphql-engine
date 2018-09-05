@@ -68,6 +68,15 @@ getTableInfo qt@(QualifiedTable sn tn) isSystemDefined = do
                AND table_name = $2
                            |] (sn, tn) False
 
+  -- Fetch primary key columns
+  rawPrimaryCols <- Q.listQE defaultTxErrorHandler [Q.sql|
+           SELECT columns
+             FROM hdb_catalog.hdb_primary_key
+            WHERE table_schema = $1
+              AND table_name = $2
+                           |] (sn, tn) False
+  pkeyCols <- mkPKeyCols rawPrimaryCols
+
   -- Fetch the constraint details
   rawConstraints <- Q.catchE defaultTxErrorHandler $ Q.listQ [Q.sql|
            SELECT constraint_type, constraint_name
@@ -75,9 +84,13 @@ getTableInfo qt@(QualifiedTable sn tn) isSystemDefined = do
              WHERE table_schema = $1
                AND table_name = $2
                            |] (sn, tn) False
-  return $ mkTableInfo qt isSystemDefined rawConstraints $
-    flip map colData $ \(colName, Q.AltJ colTy, isNull)
-                       -> (colName, colTy, isNull)
+  let colDetails = flip map colData $ \(colName, Q.AltJ colTy, isNull)
+                   -> (colName, colTy, isNull)
+  return $ mkTableInfo qt isSystemDefined rawConstraints colDetails pkeyCols
+  where
+    mkPKeyCols [] = return []
+    mkPKeyCols [Identity (Q.AltJ pkeyCols)] = return pkeyCols
+    mkPKeyCols _ = throw500 "found multiple rows for a table in hdb_primary_key"
 
 newtype TrackTable
   = TrackTable
@@ -406,9 +419,8 @@ runSqlP2 (RunSQL t cascade) = do
   -- recreate the insert permission infra
   forM_ (M.elems $ scTables postSc) $ \ti -> do
     let tn = tiName ti
-        pgCols = map pgiName $ getCols $ tiFieldInfoMap ti
     forM_ (M.elems $ tiRolePermInfoMap ti) $ \rpi ->
-      maybe (return ()) (\ipi -> liftTx $ buildInsInfra tn ipi pgCols) $ _permIns rpi
+      maybe (return ()) (liftTx . buildInsInfra tn) $ _permIns rpi
 
   return $ encode (res :: RunSQLRes)
 
