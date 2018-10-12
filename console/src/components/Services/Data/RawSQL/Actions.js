@@ -1,6 +1,6 @@
 import defaultState from './State';
 import Endpoints, { globalCookiePolicy } from '../../../../Endpoints';
-import { loadSchema } from '../DataActions';
+import { loadSchema, handleMigrationErrors } from '../DataActions';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -34,7 +34,7 @@ const executeSQL = isMigration => (dispatch, getState) => {
   const currMigrationMode = getState().main.migrationMode;
 
   const migrateUrl = returnMigrateUrl(currMigrationMode);
-  const currentSchema = getState().tables.currentSchema;
+  let currentSchema = 'public';
   const isCascadeChecked = getState().rawSQL.isCascadeChecked;
 
   let url = Endpoints.rawSQL;
@@ -46,12 +46,20 @@ const executeSQL = isMigration => (dispatch, getState) => {
   ];
   // check if track view enabled
   if (getState().rawSQL.isTableTrackChecked) {
-    const regExp = /create (view|table) (\S+)/i;
+    const regExp = /create (view|table) ((\S+)\.(\S+)|(\S+))/i;
     const matches = sql.match(regExp);
-    let trackViewName = matches ? matches[2] : '';
-    if (trackViewName.indexOf('.') !== -1) {
-      trackViewName = matches[2].split('.')[1];
+    // If group 5 is undefined, use group 3 and 4 for schema and table respectively
+    // If group 5 is present, use group 5 for table name using public schema.
+    let trackViewName = '';
+    if (matches && matches.length === 6) {
+      if (matches[5]) {
+        trackViewName = matches[5];
+      } else {
+        currentSchema = matches[3].replace(/['"]+/g, '');
+        trackViewName = matches[4];
+      }
     }
+    trackViewName = trackViewName.replace(/['"]+/g, ''); // replace quotes
     const trackQuery = {
       type: 'add_existing_table_or_view',
       args: {
@@ -122,29 +130,7 @@ const executeSQL = isMigration => (dispatch, getState) => {
         errorMsg => {
           dispatch({ type: UPDATE_MIGRATION_STATUS_ERROR, data: errorMsg });
           dispatch({ type: REQUEST_ERROR, data: errorMsg });
-          const parsedErrorMsg = errorMsg;
-          if (typeof parsedErrorMsg !== 'object') {
-            parsedErrorMsg.message = JSON.parse(errorMsg).message;
-          }
-          if (parsedErrorMsg.code === 'data_api_error') {
-            parsedErrorMsg.message = JSON.parse(errorMsg.message);
-          } else if (parsedErrorMsg.code === 'postgres-error') {
-            if (parsedErrorMsg.internal) {
-              parsedErrorMsg.message = parsedErrorMsg.internal;
-            } else {
-              parsedErrorMsg.message = { error: parsedErrorMsg.error };
-            }
-          } else if (parsedErrorMsg.code === 'dependency-error') {
-            parsedErrorMsg.message = errorMsg.error;
-          }
-          dispatch(
-            showErrorNotification(
-              'SQL execution failed!',
-              parsedErrorMsg.message.error,
-              requestBody,
-              parsedErrorMsg
-            )
-          );
+          dispatch(handleMigrationErrors('SQL Execution Failed', errorMsg));
         },
         () => {
           dispatch(

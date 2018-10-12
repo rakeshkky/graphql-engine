@@ -2,12 +2,14 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
+
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TemplateHaskell       #-}
 
 module Hasura.Server.App where
 
+import           Control.Arrow                          ((***))
 import           Control.Concurrent.MVar
 import           Data.IORef
 
@@ -32,6 +34,7 @@ import qualified Hasura.GraphQL.Schema                  as GS
 import qualified Hasura.GraphQL.Transport.HTTP          as GH
 import qualified Hasura.GraphQL.Transport.HTTP.Protocol as GH
 import qualified Hasura.GraphQL.Transport.WebSocket     as WS
+import qualified Hasura.Logging                         as L
 import qualified Network.Wai                            as Wai
 import qualified Network.Wai.Handler.WebSockets         as WS
 import qualified Network.WebSockets                     as WS
@@ -41,6 +44,8 @@ import           Hasura.RQL.DDL.Schema.Table
 --import           Hasura.RQL.DML.Explain
 import           Hasura.RQL.DML.QueryTemplate
 import           Hasura.RQL.Types
+import           Hasura.Server.Auth                     (AuthMode (..),
+                                                         getUserInfo)
 import           Hasura.Server.Init
 import           Hasura.Server.Logging
 import           Hasura.Server.Middleware               (corsMiddleware,
@@ -50,19 +55,23 @@ import           Hasura.Server.Utils
 import           Hasura.Server.Version
 import           Hasura.SQL.Types
 
-import qualified Hasura.Logging                         as L
-import           Hasura.Server.Auth                     (AuthMode, getUserInfo)
 
 
 consoleTmplt :: M.Template
 consoleTmplt = $(M.embedSingleTemplate "src-rsr/console.html")
 
-mkConsoleHTML :: IO T.Text
-mkConsoleHTML =
+isAccessKeySet :: AuthMode -> T.Text
+isAccessKeySet AMNoAuth = "false"
+isAccessKeySet _        = "true"
+
+mkConsoleHTML :: AuthMode -> IO T.Text
+mkConsoleHTML authMode =
   bool (initErrExit errMsg) (return res) (null errs)
   where
     (errs, res) = M.checkedSubstitute consoleTmplt $
-                   object ["version" .= consoleVersion]
+                   object [ "version" .= consoleVersion
+                          , "isAccessKeySet" .= isAccessKeySet authMode
+                          ]
     errMsg = "Fatal Error : console template rendering failed"
              ++ show errs
 
@@ -120,7 +129,7 @@ logResult
 logResult req reqBody sc res qTime =
   liftIO $ logger $ mkAccessLog req (reqBody, res) qTime
   where
-    logger = scLogger sc
+    logger = L.unLogger $ scLogger sc
 
 logError
   :: MonadIO m
@@ -154,7 +163,7 @@ mkSpockAction qErrEncoder serverCtx handler = do
   either (qErrToResp $ userRole userInfo == adminRole) resToResp result
 
   where
-    logger = scLogger serverCtx
+    logger = L.unLogger $ scLogger serverCtx
     -- encode error response
     qErrToResp includeInternal qErr = do
       setStatus $ qeStatus qErr
@@ -272,7 +281,7 @@ mkWaiApp
   -> AuthMode
   -> CorsConfig
   -> Bool
-  -> IO Wai.Application
+  -> IO (Wai.Application, IORef (SchemaCache, GS.GCtxMap))
 mkWaiApp isoLevel mRootDir loggerCtx pool httpManager mode corsCfg enableConsole = do
     cacheRef <- do
       pgResp <- liftIO $ runExceptT $ Q.runTx pool (Q.Serializable, Nothing) $ do
@@ -294,7 +303,7 @@ mkWaiApp isoLevel mRootDir loggerCtx pool httpManager mode corsCfg enableConsole
 
     wsServerEnv <- WS.createWSServerEnv (scLogger serverCtx) httpManager cacheRef runTx
     let wsServerApp = WS.createWSServerApp mode wsServerEnv
-    return $ WS.websocketsOr WS.defaultConnectionOptions wsServerApp spockApp
+    return (WS.websocketsOr WS.defaultConnectionOptions wsServerApp spockApp, cacheRef)
 
 httpApp :: Maybe String -> CorsConfig -> ServerCtx -> Bool -> SpockT IO ()
 httpApp mRootDir corsCfg serverCtx enableConsole = do
@@ -306,7 +315,7 @@ httpApp mRootDir corsCfg serverCtx enableConsole = do
 
     -- API Console and Root Dir
     if enableConsole then do
-      consoleHTML <- lift mkConsoleHTML
+      consoleHTML <- lift $ mkConsoleHTML $ scAuthMode serverCtx
       serveApiConsole consoleHTML
     else maybe (return ()) (middleware . MS.staticPolicy . MS.addBase) mRootDir
 
@@ -360,7 +369,7 @@ httpApp mRootDir corsCfg serverCtx enableConsole = do
     tmpltArgsFromQueryParams = do
       qparams <- params
       return $ M.fromList $ flip map qparams $
-        \(a, b) -> (TemplateParam a, String b)
+        TemplateParam *** String
 
     mkQTemplateAction tmpltName tmpltArgs =
       v1QueryHandler $ RQExecuteQueryTemplate $

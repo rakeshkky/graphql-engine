@@ -1,12 +1,23 @@
 @import "~bootstrap-sass/assets/stylesheets/bootstrap/variables";
+@import url('https://fonts.googleapis.com/css?family=Press+Start+2P');
 @import "../Common/Common.scss";
-
+@font-face {
+    font-family: arcadeClassic;
+    src: url(https://storage.googleapis.com/hasura-graphql-engine/console/assets/ARCADECLASSIC.ttf);
+}
 .container {
   position: relative;
 }
 
 .flexRow {
   // display: flex;
+}
+
+.phantom {
+  display: block;
+  padding: 14.5px 10px;
+  height: 17.5px;
+  width: 100%;
 }
 
 .updateBannerWrapper {
@@ -91,7 +102,7 @@
       {
         img
         {
-          width: 30px;
+          width: 100px;
         }
       }
     }
@@ -109,6 +120,7 @@
   font-size: 10px;
   letter-spacing: 1px;
   font-weight: 300;
+  padding-top: 6px;
 }
 .toggleSidebar {
   position: absolute;
@@ -834,24 +846,57 @@
 {
   border-bottom: 1px solid #788095;
 }
+.supportSection {
+  cursor: pointer;
+  .helpSection {
+    &:hover {
+      opacity: 0.7;
+      font-weight: 600;
+    }
+  }
+}
 .helpSection {
   display: flex;
   align-items: center;
-  background-color: #22283b;
+  // background-color: #22283b;
   padding: 15px;
+  position: relative;
+  .selected {
+    bottom: 0;
+    background: #FFC627;
+    position: absolute;
+    z-index: 999999999;
+    height: 4px;
+    width: 100%;
+    left: 0px;
+  }
+}
+
+.settingsIcon {
+  // background: #5668a4;
+  a {
+    text-decoration: none;
+  }
 }
 
 .shareSection {
   display: flex;
   align-items: center;
-  background-color: #fb5151;
+  background-color: white;
   padding: 15px;
   color: white;
   cursor: pointer;
+  &:hover {
+    opacity: 0.7;
+  }
+  img
+  {
+    width: 23px;
+  }
 }
 
 .secureSection {
-  background-color: #545a6c;
+  // background-color: #545a6c;
 
   padding: 15px;
   a {
@@ -894,20 +939,113 @@
   text-transform: none;
   text-align: center;
 }
+.pixelText
+{
+  font-family: arcadeClassic;
+  font-size: 20px;
+  text-transform: uppercase;
+  padding-top: 10px;
+  text-align: center;
+  letter-spacing: 1px;
+
+  padding-top: 0;
+  color: #606060;
+  font-size: 15px;
+}
+
+.pixelText1
+{
+  font-family: arcadeClassic;
+  font-size: 14px;
+  padding-left: 0px !important;
+  text-transform: uppercase;
+  padding: 10px 0;
+  text-align: left;
+  line-height: 1.8;
+  letter-spacing: 1px;
+}
+.help_dropdown_menu
+{
+  top: 43px;
+  right: 53px;
+  background-color: transparent;
+  box-shadow: none;
+  border: 0;
+  .help_dropdown_menu_container
+  {
+    width: 300px;
+    float: right;
+    background-color: #43495a;
+    padding: 15px;
+    position: relative;
+  }
+  li
+  {
+    display: block;
+    font-weight: 300;
+    text-transform: none;
+    font-size: 14px;
+    color: #fff;
+    padding: 5px 0;
+    .displayBlock
+    {
+      display: inline-block !important;
+    }
+    a
+    {
+      color: #fff;
+      display: flex;
+      align-items: center;
+      img
+      {
+        width: 20px;
+        display: inline-block;
+        margin-right: 10px;
+      }
+    }
+    a:hover
+    {
+      text-decoration: none;
+      opacity: 0.7;
+    }
+  }
+}
+.help_dropdown_menu_heart_consented {
+  right: 0px;
+}
 .dropdown_menu
 {
-  top: 53px;
-  right: 10px;
+  top: 43px;
+  right: 0px;
   background-color: transparent;
   box-shadow: none;
   border: 0;
   .dropdown_menu_container
   {
-    width: 330px;
+    width: 490px;
     float: right;
-    background-color: #43495a;
-    padding: 15px;
-    border-radius: 5px;
+
+    // background-color: #0038d5;
+    background-color: #FFF;
+    border: #43495a 2px dashed;
+    border-top: 0;
+    border-right: 0;
+    color: #f24444;
+
+    padding: 25px;
+    position: relative;
+    .closeDropDown
+    {
+      color: #43495a;
+      cursor: pointer;
+      position: absolute;
+      top: 10px;
+      left: 20px;
+      img
+      {
+        width: 10px;
+      }
+    }
   }
   .arrow_up_dropdown
   {
@@ -923,35 +1061,41 @@
   .displayFlex
   {
     display: flex;
-    align-items: center;
+    // align-items: center;
     justify-content: center;
     margin-top: 10px;
   }
   li
   {
     display: block;
-    color: #fff;
+    color: #f24444;
     text-transform: none;
-    padding: 10px 0;
+    padding: 0px 15px;
     display: inline-block;
     padding-bottom: 0;
+    font-weight: 300;
     a
     {
-      padding: 0;
+      color: #fff;
     }
     a:hover
     {
-      text-decoration: none;
+      color: #fff;
+    }
+    .socialIcon
+    {
+      width: 90px;
+      height: 90px;
+      border: 2px solid #fff;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .gitHubBtn
     {
       height: 20px;
     }
-  }
-  li:hover
-  {
-    text-decoration: none;
-    color: #ccc;
   }
 }
 .twitterShare {
