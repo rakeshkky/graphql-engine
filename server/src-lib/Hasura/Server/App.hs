@@ -72,6 +72,7 @@ mkConsoleHTML authMode =
     (errs, res) = M.checkedSubstitute consoleTmplt $
                    object [ "version" .= consoleVersion
                           , "isAccessKeySet" .= isAccessKeySet authMode
+                          , "serverVersion" .= currentVersion
                           ]
     errMsg = "Fatal Error : console template rendering failed"
              ++ show errs
