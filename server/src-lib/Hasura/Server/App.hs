@@ -370,5 +370,5 @@ httpApp mRootDir corsCfg serverCtx enableConsole = do
       ExecQueryTemplate (TQueryName tmpltName) tmpltArgs
 
     serveApiConsole htmlFile = do
-      get root $ redirect "/console"
+      get root $ redirect "console"
       get ("console" <//> wildcard) $ const $ html htmlFile
