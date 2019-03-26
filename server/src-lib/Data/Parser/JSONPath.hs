@@ -5,23 +5,33 @@ module Data.Parser.JSONPath
   ) where
 
 import           Control.Applicative  ((<|>))
+import           Control.Monad        (unless)
 import           Data.Aeson.Internal  (JSONPath, JSONPathElement (..))
 import           Data.Attoparsec.Text
 import           Data.Bool            (bool)
-import           Data.Char            (isDigit)
-import qualified Data.Text            as T
+import           Data.Char            (isAlpha, isDigit)
 import           Prelude              hiding (takeWhile)
 import           Text.Read            (readMaybe)
 
+import qualified Data.Text            as T
+
 parseKey :: Parser T.Text
 parseKey = do
-  firstChar <- letter
-           <?> "the first character of property name must be a letter."
-  name <- many' (letter
-           <|> digit
-           <|> satisfy (`elem` ("-_" :: String))
-            )
-  return $ T.pack (firstChar:name)
+  firstChar <- anyChar
+  if firstChar == singleQuote then do
+    t <- takeTill (== singleQuote)
+    skipWhile (== singleQuote)
+    return t
+  else do
+    unless (isAlpha firstChar) $
+      fail "the first character of property name must be a letter."
+    name <- many' (letter
+             <|> digit
+             <|> satisfy (`elem` ("-_" :: String))
+              )
+    return $ T.pack (firstChar:name)
+  where
+    singleQuote = '\''
 
 parseIndex :: Parser Int
 parseIndex = skip (== '[') *> anyChar >>= parseDigits
