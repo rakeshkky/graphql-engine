@@ -59,7 +59,7 @@ getTriggerSql
   -> Bool
   -> SubscribeOpSpec
   -> Maybe T.Text
-getTriggerSql op trn qt allCols strfyNum spec =
+getTriggerSql op trn qt allColInfos strfyNum spec =
   let globalCtx =  HashMap.fromList
                    [ (T.pack "NAME", triggerNameToTxt trn)
                    , (T.pack "QUALIFIED_TRIGGER_NAME", pgIdenTrigger op trn)
@@ -70,6 +70,7 @@ getTriggerSql op trn qt allCols strfyNum spec =
   in
       renderGingerTmplt context <$> triggerTmplt
   where
+    allCols = map pgiName allColInfos
     createOpCtx op1 (SubscribeOpSpec columns payload) =
       HashMap.fromList
       [ (T.pack "OPERATION", T.pack $ show op1)
@@ -92,14 +93,11 @@ getTriggerSql op trn qt allCols strfyNum spec =
         MANUAL -> S.SENull
     getRowExpression opVar scs =
       case scs of
-        SubCStar -> applyRowToJson $ S.SEUnsafe $ opToTxt opVar
-        SubCArray cols -> applyRowToJson $
-          S.mkRowExp $ map (toExtr . mkQId opVar) $
-          getColInfos cols allCols
+        SubCStar       -> applyRowToJson $ generateRowExpression allCols opVar
+        SubCArray cols -> applyRowToJson $ generateRowExpression cols opVar
 
     applyRowToJson e = S.SEFnApp "row_to_json" [e] Nothing
     applyRow e = S.SEFnApp "row" [e] Nothing
-    toExtr = flip S.Extractor Nothing
     mkQId opVar colInfo = toJSONableExp strfyNum (pgiType colInfo) $
       S.SEQIden $ S.QIden (opToQual opVar) $ toIden $ pgiName colInfo
 
@@ -108,10 +106,13 @@ getTriggerSql op trn qt allCols strfyNum spec =
 
     renderRow opVar scs =
       case scs of
-        SubCStar -> applyRow $ S.SEUnsafe $ opToTxt opVar
-        SubCArray cols -> applyRow $
-          S.mkRowExp $ map (toExtr . mkQId opVar) $
-          getColInfos cols allCols
+        SubCStar       -> applyRow $ generateRowExpression allCols opVar
+        SubCArray cols -> applyRow $ generateRowExpression cols opVar
+
+    generateRowExpression cols opVar =
+      S.mkRowExp $ flip map (getColInfos cols allColInfos) $
+      \colInfo -> S.Extractor (mkQId opVar colInfo) $
+                  Just $ S.toAlias $ pgiName colInfo
 
     fromMaybePayload = fromMaybe SubCStar
 
