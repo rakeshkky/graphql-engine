@@ -397,13 +397,13 @@ Search nearby landmarks with ``distance_kms`` default value which is 2 kms:
 Accessing Hasura session variables in custom functions
 ******************************************************
 
-Use v2 :ref:`track_function <track_function_v2>` to add function with defining a session variable argument in config.
-Session variable argument will be a JSON object where keys are session variable names and values are Strings.
-Use ``->>`` JSON operator to fetch a value of a session variable as shown in the following example.
+Use a v2 :ref:`track_function <track_function_v2>` to add function by defining a session variable argument in config.
+The session variable argument will be a JSON object where keys are session variable names and values are strings.
+Use the ``->>`` JSON operator to fetch a value of a session variable as shown in the following example.
 
 .. note::
 
-   Session variable argument specified will not be included in ``<function-name>_args`` input object in the GraphQL schema.
+   The session variable argument specified will not be included in the ``<function-name>_args`` input object in the GraphQL schema.
 
 .. code-block:: plpgsql
 

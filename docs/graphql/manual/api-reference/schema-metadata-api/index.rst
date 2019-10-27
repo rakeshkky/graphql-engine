@@ -101,12 +101,12 @@ The various types of queries are listed in the following table:
    * - :ref:`track_function`
      - :ref:`FunctionName <FunctionName>`
      - 1
-     - Add a SQL function
+     - Add an SQL function
 
    * - :ref:`track_function <track_function_v2>`
      - :ref:`track_function_args <track_function_args_syntax_v2>`
      - 2
-     - Add a SQL function with configuration
+     - Add an SQL function with configuration
 
    * - :ref:`untrack_function`
      - :ref:`FunctionName <FunctionName>`
