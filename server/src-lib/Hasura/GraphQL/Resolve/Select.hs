@@ -98,7 +98,7 @@ fromSelSet fldTy flds =
         fldInfo <- getFldInfo fldTy fldName
         case fldInfo of
           RFPGColumn colInfo ->
-            RS.mkAnnColField colInfo <$> argsToColOp (_fArguments fld)
+            RS.FCol colInfo <$> argsToColOp (_fArguments fld)
           RFComputedField computedField ->
             RS.FComputedField <$> resolveComputedField computedField fld
           RFRelationship (RelationshipField relInfo isAgg colGNameMap tableFilter tableLimit) -> do

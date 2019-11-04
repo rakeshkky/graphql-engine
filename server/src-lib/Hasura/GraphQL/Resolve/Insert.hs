@@ -264,15 +264,10 @@ fetchFromColVals colVal reqCols f =
     pgColVal <- parsePGScalarValue (pgiType ci) val
     return (f ci, pgColVal)
 
-mkSelCTE
-  :: MonadError QErr m
-  => QualifiedTable
-  -> [PGColumnInfo]
-  -> Maybe ColVals
-  -> m CTEExp
-mkSelCTE tn allCols colValM = do
-  selCTE <- mkSelCTEFromColVals tn allCols $ maybe [] pure colValM
-  return $ CTEExp selCTE Seq.Empty
+mkSelCTE :: [PGColumnInfo] -> Maybe ColVals -> CTEExp
+mkSelCTE allCols colValM =
+  let selCTE = mkSelCTEFromColumnVals allCols $ maybe [] pure colValM
+  in CTEExp selCTE Seq.Empty
 
 execCTEExp
   :: Bool
@@ -405,7 +400,7 @@ insertObj strfyNum role tn singleObjIns addCols = do
   RI.setConflictCtx ccM
   MutateResp affRows colVals <- mutateAndFetchCols tn allCols (cte, insPArgs) strfyNum
   colValM <- asSingleObject colVals
-  cteExp <- mkSelCTE tn allCols colValM
+  let cteExp = mkSelCTE allCols colValM
 
   arrRelAffRows <- bool (withArrRels colValM) (return 0) $ null arrRels
   let totAffRows = objRelAffRows + affRows + arrRelAffRows

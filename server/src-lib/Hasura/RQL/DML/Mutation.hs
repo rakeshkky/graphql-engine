@@ -2,12 +2,13 @@ module Hasura.RQL.DML.Mutation
   ( Mutation(..)
   , runMutation
   , mutateAndFetchCols
-  , mkSelCTEFromColVals
+  , mkSelCTEFromColumnVals
   )
 where
 
 import           Hasura.Prelude
 
+import qualified Data.Aeson.Extended      as J
 import qualified Data.HashMap.Strict      as Map
 import qualified Data.Sequence            as DS
 import qualified Database.PG.Query        as Q
@@ -21,7 +22,6 @@ import           Hasura.RQL.DML.Select
 import           Hasura.RQL.Instances     ()
 import           Hasura.RQL.Types
 import           Hasura.SQL.Types
-import           Hasura.SQL.Value
 
 data Mutation
   = Mutation
@@ -48,9 +48,9 @@ mutateAndReturn (Mutation qt (cte, p) mutFlds _ strfyNum) =
 mutateAndSel :: Mutation -> Q.TxE QErr EncJSON
 mutateAndSel (Mutation qt q mutFlds allCols strfyNum) = do
   -- Perform mutation and fetch unique columns
-  MutateResp _ colVals <- mutateAndFetchCols qt allCols q strfyNum
-  selCTE <- mkSelCTEFromColVals qt allCols colVals
-  let selWith = mkSelWith qt selCTE mutFlds False strfyNum
+  MutateResp _ columnVals <- mutateAndFetchCols qt allCols q strfyNum
+  let selCTE = mkSelCTEFromColumnVals allCols columnVals
+      selWith = mkSelWith qt selCTE mutFlds False strfyNum
   -- Perform select query and fetch returning fields
   encJFromBS . runIdentity . Q.getRow
     <$> Q.rawQE dmlTxErrorHandler (Q.fromBuilder $ toSQL selWith) [] True
@@ -70,7 +70,7 @@ mutateAndFetchCols qt cols (cte, p) strfyNum =
     tabFrom = FromIden aliasIden
     tabPerm = TablePerm annBoolExpTrue Nothing
     selFlds = flip map cols $
-              \ci -> (fromPGCol $ pgiColumn ci, mkAnnColFieldAsText ci)
+              \ci -> (fromPGCol $ pgiColumn ci, FCol ci Nothing)
 
     sql = toSQL selectWith
     selectWith = S.SelectWith [(S.Alias aliasIden, cte)] select
@@ -88,31 +88,31 @@ mutateAndFetchCols qt cols (cte, p) strfyNum =
     colSel = S.SESelect $ mkSQLSelect False $
              AnnSelG selFlds tabFrom tabPerm noTableArgs strfyNum
 
-mkSelCTEFromColVals
-  :: (MonadError QErr m)
-  => QualifiedTable -> [PGColumnInfo] -> [ColVals] -> m S.CTE
-mkSelCTEFromColVals qt allCols colVals =
-  S.CTESelect <$> case colVals of
-    [] -> return selNoRows
-    _  -> do
-      tuples <- mapM mkTupsFromColVal colVals
-      let fromItem = S.FIValues (S.ValuesExp tuples) tableAls $ Just colNames
-      return S.mkSelect
+mkSelCTEFromColumnVals :: [PGColumnInfo] -> [ColVals] -> S.CTE
+mkSelCTEFromColumnVals allCols columnVals =
+  S.CTESelect S.mkSelect
         { S.selExtr = [S.selectStar]
-        , S.selFrom = Just $ S.FromExp [fromItem]
+        , S.selFrom = Just $ S.FromExp [selectFrom]
         }
   where
-    tableAls = S.Alias $ Iden $ snakeCaseQualObject qt
-    colNames = map pgiColumn allCols
-    mkTupsFromColVal colVal =
-      fmap S.TupleExp $ forM allCols $ \ci -> do
-        let pgCol = pgiColumn ci
-        val <- onNothing (Map.lookup pgCol colVal) $
-          throw500 $ "column " <> pgCol <<> " not found in returning values"
-        toTxtValue <$> parsePGScalarValue (pgiType ci) val
+    selectFrom =
+      let jsonToRecordsetFunction =
+            QualifiedObject (SchemaName "pg_catalog") (FunctionName "json_to_recordset")
 
-    selNoRows =
-      S.mkSelect { S.selExtr = [S.selectStar]
-                 , S.selFrom = Just $ S.mkSimpleFromExp qt
-                 , S.selWhere = Just $ S.WhereFrag $ S.BELit False
-                 }
+          columnValuesJson = S.withTyAnn PGJSON $
+                             S.SELit $ J.encodeToStrictText $ reverse columnVals
+
+          functionArgs = S.FunctionArgs [columnValuesJson] Map.empty
+
+          definitions = flip map allCols $ \pci ->
+                        S.ColumnDefinitionItem (pgiColumn pci)
+                        (toPGScalarType $ pgiType pci)
+
+          functionAlias = S.FunctionAlias (S.Alias $ Iden "json_to_recordset_row")
+                          $ Just definitions
+
+      in S.mkFunctionFromItem jsonToRecordsetFunction functionArgs $ Just functionAlias
+
+    toPGScalarType (PGColumnScalar scalar) =
+      if isGeoType scalar then PGJSON else scalar
+    toPGScalarType (PGColumnEnumReference _) = PGText

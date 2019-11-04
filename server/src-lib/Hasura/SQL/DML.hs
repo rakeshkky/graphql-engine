@@ -120,8 +120,9 @@ mkSelFromExp isLateral sel tn =
   where
     alias = Alias $ toIden tn
 
-mkFuncFromItem :: QualifiedFunction -> FunctionArgs -> FromItem
-mkFuncFromItem qf args = FIFunc $ FunctionExp qf args Nothing
+mkFunctionFromItem
+  :: QualifiedFunction -> FunctionArgs -> Maybe FunctionAlias -> FromItem
+mkFunctionFromItem qf args alias = FIFunc $ FunctionExp qf args alias
 
 mkRowExp :: [Extractor] -> SQLExp
 mkRowExp extrs = let
@@ -420,11 +421,33 @@ instance ToSQL FunctionArgs where
                     \(argName, argVal) -> SENamedArg (Iden argName) argVal
     in paren $ ", " <+> (positionalArgs <> namedArgs)
 
+data ColumnDefinitionItem
+  = ColumnDefinitionItem
+  { dliColumn :: !PGCol
+  , dliType   :: !PGScalarType
+  } deriving (Show, Eq, Data)
+
+instance ToSQL ColumnDefinitionItem where
+  toSQL (ColumnDefinitionItem column columnType) =
+    toSQL column <-> toSQL columnType
+
+data FunctionAlias
+  = FunctionAlias
+  { falsName        :: !Alias
+  , falsDefinitions :: !(Maybe [ColumnDefinitionItem])
+  } deriving (Show, Eq, Data)
+
+instance ToSQL FunctionAlias where
+  toSQL (FunctionAlias name Nothing) =
+    toSQL name
+  toSQL (FunctionAlias name (Just definitions)) =
+    toSQL name <> paren (", " <+> definitions)
+
 data FunctionExp
   = FunctionExp
   { feName  :: !QualifiedFunction
   , feArgs  :: !FunctionArgs
-  , feAlias :: !(Maybe Alias)
+  , feAlias :: !(Maybe FunctionAlias)
   } deriving (Show, Eq, Data)
 
 instance ToSQL FunctionExp where

@@ -36,8 +36,8 @@ selFromToFromItem pfx = \case
   FromTable tn -> S.FISimple tn Nothing
   FromIden i   -> S.FIIden i
   FromFunction qf args ->
-    S.FIFunc $ S.FunctionExp qf (fromTableRowArgs pfx args) $
-    Just $ S.toAlias $ functionToIden qf
+    let functionAlias = S.FunctionAlias (S.toAlias $ functionToIden qf) Nothing
+    in S.mkFunctionFromItem qf (fromTableRowArgs pfx args) $ Just functionAlias
 
 selFromToQual :: SelectFrom -> S.Qual
 selFromToQual = \case
@@ -213,7 +213,7 @@ buildJsonObject pfx parAls arrRelCtx strfyNum flds =
     toSQLFld :: (FieldName -> S.SQLExp -> f)
              -> (FieldName, AnnFld) -> f
     toSQLFld f (fldAls, fld) = f fldAls $ case fld of
-      FCol c      -> toSQLCol c
+      FCol col args -> toSQLCol col args
       FExp e      -> S.SELit e
       FObj objSel ->
         let qual = mkObjRelTableAls pfx $ aarName objSel
@@ -228,14 +228,14 @@ buildJsonObject pfx parAls arrRelCtx strfyNum flds =
         let ccPfx = mkComputedFieldTableAls pfx fldAls
         in S.mkQIdenExp ccPfx fldAls
 
-    toSQLCol :: AnnColField -> S.SQLExp
-    toSQLCol (AnnColField col asText colOpM) =
-      toJSONableExp strfyNum (pgiType col) asText $ withColOp colOpM $
+    toSQLCol :: PGColumnInfo -> Maybe ColOp -> S.SQLExp
+    toSQLCol col colOpM =
+      toJSONableExp strfyNum (pgiType col) $ withColOp colOpM $
       S.mkQIdenExp (mkBaseTableAls pfx) $ pgiColumn col
 
     fromScalarComputedField :: ComputedFieldScalarSel S.SQLExp -> S.SQLExp
     fromScalarComputedField computedFieldScalar =
-      toJSONableExp strfyNum (PGColumnScalar ty) False $ withColOp colOpM $
+      toJSONableExp strfyNum (PGColumnScalar ty) $ withColOp colOpM $
       S.SEFunction $ S.FunctionExp fn (fromTableRowArgs pfx args) Nothing
       where
         ComputedFieldScalarSel fn args ty colOpM = computedFieldScalar
@@ -790,7 +790,7 @@ mkFuncSelectWith f annFn =
     funcSel = S.mkSelect { S.selFrom = Just $ S.FromExp [frmItem]
                          , S.selExtr = [S.Extractor S.SEStar Nothing]
                          }
-    frmItem = S.mkFuncFromItem qf $ mkSQLFunctionArgs fnArgs
+    frmItem = S.mkFunctionFromItem qf (mkSQLFunctionArgs fnArgs) Nothing
 
     mkSQLFunctionArgs (FunctionArgsExp positional named) =
       S.FunctionArgs positional named
