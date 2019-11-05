@@ -120,7 +120,7 @@ buildSchemaCacheWithOptions withSetup = do
       subTableP2Setup qt etc
       allCols <- getCols . _tiFieldInfoMap <$> askTabInfo qt
       when withSetup $ liftTx $
-        mkAllTriggersQ trn qt allCols (stringifyNum sqlGenCtx) (etcDefinition etc)
+        mkAllTriggersQ trn qt allCols (_sgcStringifyNumericTypes sqlGenCtx) (etcDefinition etc)
 
   -- sql functions
   forM_ functions $ \(CatalogFunction qf systemDefined funcDefs) -> do
@@ -294,7 +294,7 @@ withMetadataCheck cascade action = do
           forM_ (M.elems $ _tiRolePermInfoMap ti) $ \rpi ->
             maybe (return ()) (liftTx . buildInsInfra tn) $ _permIns rpi
 
-        strfyNum <- stringifyNum <$> askSQLGenCtx
+        strfyNum <- _sgcStringifyNumericTypes <$> askSQLGenCtx
         --recreate triggers
         forM_ (M.elems $ scTables postSc) $ \ti -> do
           let tn = _tiName ti

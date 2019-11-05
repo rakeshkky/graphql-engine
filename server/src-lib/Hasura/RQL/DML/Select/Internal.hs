@@ -194,9 +194,9 @@ fromTableRowArgs pfx = toFunctionArgs . fmap toSQLExp
 -- json_build_object is slower than row_to_json hence it is only
 -- used when needed
 buildJsonObject
-  :: Iden -> FieldName -> ArrRelCtx -> Bool
+  :: Iden -> FieldName -> ArrRelCtx -> SelectOpts
   -> [(FieldName, AnnFld)] -> (S.Alias, S.SQLExp)
-buildJsonObject pfx parAls arrRelCtx strfyNum flds =
+buildJsonObject pfx parAls arrRelCtx selectOpts flds =
   if any ( (> 63) . T.length . getFieldNameTxt . fst ) flds
   then withJsonBuildObj parAls jsonBuildObjExps
   else withRowToJSON parAls rowToJsonExtrs
@@ -230,12 +230,12 @@ buildJsonObject pfx parAls arrRelCtx strfyNum flds =
 
     toSQLCol :: PGColumnInfo -> Maybe ColOp -> S.SQLExp
     toSQLCol col colOpM =
-      toJSONableExp strfyNum (pgiType col) $ withColOp colOpM $
+      toJSONableExp selectOpts (pgiType col) $ withColOp colOpM $
       S.mkQIdenExp (mkBaseTableAls pfx) $ pgiColumn col
 
     fromScalarComputedField :: ComputedFieldScalarSel S.SQLExp -> S.SQLExp
     fromScalarComputedField computedFieldScalar =
-      toJSONableExp strfyNum (PGColumnScalar ty) $ withColOp colOpM $
+      toJSONableExp selectOpts (PGColumnScalar ty) $ withColOp colOpM $
       S.SEFunction $ S.FunctionExp fn (fromTableRowArgs pfx args) Nothing
       where
         ComputedFieldScalarSel fn args ty colOpM = computedFieldScalar
@@ -283,7 +283,7 @@ processAnnOrderByItem
   :: Iden
   -> FieldName
   -> ArrRelCtx
-  -> Bool
+  -> SelectOpts
   -> AnnOrderByItem
        -- the extractors which will select the needed columns
   -> ( (S.Alias, S.SQLExp)
@@ -292,7 +292,7 @@ processAnnOrderByItem
        -- extra nodes for order by
      , OrderByNode
      )
-processAnnOrderByItem pfx parAls arrRelCtx strfyNum obItemG =
+processAnnOrderByItem pfx parAls arrRelCtx selectOpts obItemG =
   ( (obColAls, obColExp)
   , sqlOrdByItem
   , relNodeM
@@ -300,7 +300,7 @@ processAnnOrderByItem pfx parAls arrRelCtx strfyNum obItemG =
   where
     OrderByItemG obTyM annObCol obNullsM = obItemG
     ((obColAls, obColExp), relNodeM) =
-      processAnnOrderByCol pfx parAls arrRelCtx strfyNum annObCol
+      processAnnOrderByCol pfx parAls arrRelCtx selectOpts annObCol
 
     sqlOrdByItem =
       S.OrderByItem (S.SEIden $ toIden obColAls)
@@ -310,14 +310,14 @@ processAnnOrderByCol
   :: Iden
   -> FieldName
   -> ArrRelCtx
-  -> Bool
+  -> SelectOpts
   -> AnnObCol
        -- the extractors which will select the needed columns
   -> ( (S.Alias, S.SQLExp)
        -- extra nodes for order by
      , OrderByNode
      )
-processAnnOrderByCol pfx parAls arrRelCtx strfyNum = \case
+processAnnOrderByCol pfx parAls arrRelCtx selectOpts = \case
   AOCPG colInfo ->
     let
       qualCol  = S.mkQIdenExp (mkBaseTableAls pfx) (toIden $ pgiColumn colInfo)
@@ -330,7 +330,7 @@ processAnnOrderByCol pfx parAls arrRelCtx strfyNum = \case
     let relPfx  = mkObjRelTableAls pfx rn
         ordByFldName = mkOrderByFieldName rn
         ((nesAls, nesCol), ordByNode) =
-          processAnnOrderByCol relPfx ordByFldName emptyArrRelCtx strfyNum rest
+          processAnnOrderByCol relPfx ordByFldName emptyArrRelCtx selectOpts rest
         (objNodeM, arrNodeM) = case ordByNode of
           OBNNothing           -> (Nothing, Nothing)
           OBNObjNode name node -> (Just (name, node), Nothing)
@@ -358,7 +358,7 @@ processAnnOrderByCol pfx parAls arrRelCtx strfyNum = \case
         (extr, arrFlds) = mkAggObExtrAndFlds annAggOb
         selFld = TAFAgg arrFlds
         bn = mkBaseNode False (Prefixes arrPfx pfx) fldName selFld tabFrom
-             tabPerm noTableArgs strfyNum
+             tabPerm noTableArgs selectOpts
         aggNode = ArrNode [extr] colMapping $ mergeBaseNodes bn $
                   mkEmptyBaseNode arrPfx tabFrom
         obAls = arrPfx <> Iden "." <> toIden fldName
@@ -395,7 +395,7 @@ aggSelToArrNode pfxs als aggSel =
   ArrNode [extr] colMapping mergedBN
   where
     AnnRelG _ colMapping annSel = aggSel
-    AnnSelG aggFlds tabFrm tabPerm tabArgs strfyNum = annSel
+    AnnSelG aggFlds tabFrm tabPerm tabArgs selectOpts = annSel
     fldAls = S.Alias $ toIden als
 
     extr = flip S.Extractor (Just fldAls) $ S.applyJsonBuildObj $
@@ -409,7 +409,7 @@ aggSelToArrNode pfxs als aggSel =
     mergedBN = foldr mergeBaseNodes emptyBN allBNs
 
     mkAggBaseNode (fn, selFld) =
-      mkBaseNode subQueryReq pfxs fn selFld tabFrm tabPerm tabArgs strfyNum
+      mkBaseNode subQueryReq pfxs fn selFld tabFrm tabPerm tabArgs selectOpts
 
     selFldToExtr (FieldName t, fld) = (:) (S.SELit t) $ pure $ case fld of
       TAFAgg flds -> aggFldToExp flds
@@ -485,7 +485,7 @@ fetchOrdByAggRels orderByM = fromMaybe [] relNamesM
 mkOrdByItems
   :: Iden -> FieldName
   -> Maybe (NE.NonEmpty AnnOrderByItem)
-  -> Bool
+  -> SelectOpts
   -> ArrRelCtx
      -- extractors
   -> ( [(S.Alias, S.SQLExp)]
@@ -496,10 +496,10 @@ mkOrdByItems
      -- final order by expression
      , Maybe S.OrderByExp
      )
-mkOrdByItems pfx fldAls orderByM strfyNum arrRelCtx =
+mkOrdByItems pfx fldAls orderByM selectOpts arrRelCtx =
   (obExtrs, ordByObjsMap, ordByArrsMap, ordByExpM)
   where
-    procAnnOrdBy' = processAnnOrderByItem pfx fldAls arrRelCtx strfyNum
+    procAnnOrdBy' = processAnnOrderByItem pfx fldAls arrRelCtx selectOpts
     procOrdByM =
       unzip3 . map procAnnOrdBy' . toList <$> orderByM
 
@@ -526,10 +526,10 @@ mkBaseNode
   -> SelectFrom
   -> TablePerm
   -> TableArgs
-  -> Bool
+  -> SelectOpts
   -> BaseNode
 mkBaseNode subQueryReq pfxs fldAls annSelFlds selectFrom
-           tablePerm tableArgs strfyNum =
+           tablePerm tableArgs selectOpts =
   BaseNode thisPfx distExprM fromItem finalWhere ordByExpM finalLimit offsetM
   allExtrs allObjsWithOb allArrsWithOb computedFields
   where
@@ -558,7 +558,7 @@ mkBaseNode subQueryReq pfxs fldAls annSelFlds selectFrom
         TAFNodes flds ->
           let arrFlds = mapMaybe getAnnArr flds
               arrRelCtx = mkArrRelCtx arrFlds
-              selExtr = buildJsonObject thisPfx fldAls arrRelCtx strfyNum flds
+              selExtr = buildJsonObject thisPfx fldAls arrRelCtx selectOpts flds
               -- all object relationships
               objNodes = HM.fromListWith mergeObjNodes $
                         map mkObjItem (mapMaybe getAnnObj flds)
@@ -620,7 +620,7 @@ mkBaseNode subQueryReq pfxs fldAls annSelFlds selectFrom
 
     mkArrRelCtx arrSels = ArrRelCtx arrSels aggOrdByRelNames
 
-    mkOrdByItems' = mkOrdByItems thisPfx fldAls orderByM strfyNum
+    mkOrdByItems' = mkOrdByItems thisPfx fldAls orderByM selectOpts
 
     distItemsM = processDistinctOnCol thisPfx <$> distM
     distExprM = fst <$> distItemsM
@@ -660,9 +660,9 @@ mkBaseNode subQueryReq pfxs fldAls annSelFlds selectFrom
 
 annSelToBaseNode :: Bool -> Prefixes -> FieldName -> AnnSimpleSel -> BaseNode
 annSelToBaseNode subQueryReq pfxs fldAls annSel =
-  mkBaseNode subQueryReq pfxs fldAls (TAFNodes selFlds) tabFrm tabPerm tabArgs strfyNum
+  mkBaseNode subQueryReq pfxs fldAls (TAFNodes selFlds) tabFrm tabPerm tabArgs selectOpts
   where
-    AnnSelG selFlds tabFrm tabPerm tabArgs strfyNum = annSel
+    AnnSelG selFlds tabFrm tabPerm tabArgs selectOpts = annSel
 
 mkObjNode :: Prefixes -> (FieldName, ObjSel) -> ObjNode
 mkObjNode pfxs (fldName, AnnRelG _ rMapn rAnnSel) =

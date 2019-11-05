@@ -198,8 +198,8 @@ convSelectQ fieldInfoMap selPermInfo selQ sessVarBldr prepValBldr = do
       tabArgs = TableArgs wClause annOrdByM mQueryLimit
                 (S.intToSQLExp <$> mQueryOffset) Nothing
 
-  strfyNum <- stringifyNum <$> askSQLGenCtx
-  return $ AnnSelG annFlds tabFrom tabPerm tabArgs strfyNum
+  strfyNum <- _sgcStringifyNumericTypes <$> askSQLGenCtx
+  return $ AnnSelG annFlds tabFrom tabPerm tabArgs $ SelectOpts strfyNum True
 
   where
     mQueryOffset = sqOffset selQ

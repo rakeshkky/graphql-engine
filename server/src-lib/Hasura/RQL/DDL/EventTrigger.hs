@@ -21,6 +21,7 @@ import           Hasura.EncJSON
 import           Hasura.Prelude
 import           Hasura.RQL.DDL.Headers
 import           Hasura.RQL.DML.Internal
+import           Hasura.RQL.DML.Select
 import           Hasura.RQL.Types
 import           Hasura.SQL.Types
 import           System.Environment      (lookupEnv)
@@ -49,7 +50,7 @@ mkAllTriggersQ
   :: TriggerName
   -> QualifiedTable
   -> [PGColumnInfo]
-  -> Bool
+  -> StringifyNumericTypes
   -> TriggerOpsDef
   -> Q.TxE QErr ()
 mkAllTriggersQ trn qt allCols strfyNum fullspec = do
@@ -64,7 +65,7 @@ mkTriggerQ
   :: TriggerName
   -> QualifiedTable
   -> [PGColumnInfo]
-  -> Bool
+  -> StringifyNumericTypes
   -> Ops
   -> SubscribeOpSpec
   -> Q.TxE QErr ()
@@ -103,7 +104,7 @@ mkTriggerQ trn qt allCols strfyNum op (SubscribeOpSpec columns payload) =
     applyRowToJson e = S.SEFnApp "row_to_json" [e] Nothing
     applyRow e = S.SEFnApp "row" [e] Nothing
     toExtr = flip S.Extractor Nothing
-    mkQId opVar colInfo = toJSONableExp strfyNum (pgiType colInfo) $
+    mkQId opVar colInfo = toJSONableExp (SelectOpts strfyNum True) (pgiType colInfo) $
       S.SEQIden $ S.QIden (opToQual opVar) $ toIden $ pgiColumn colInfo
 
     opToQual = S.QualVar . opToTxt
@@ -126,7 +127,7 @@ delTriggerQ trn = mapM_ (\op -> Q.unitQE
 addEventTriggerToCatalog
   :: QualifiedTable
   -> [PGColumnInfo]
-  -> Bool
+  -> StringifyNumericTypes
   -> EventTriggerConf
   -> Q.TxE QErr ()
 addEventTriggerToCatalog qt allCols strfyNum etc = do
@@ -154,7 +155,7 @@ delEventTriggerFromCatalog trn = do
 updateEventTriggerToCatalog
   :: QualifiedTable
   -> [PGColumnInfo]
-  -> Bool
+  -> StringifyNumericTypes
   -> EventTriggerConf
   -> Q.TxE QErr ()
 updateEventTriggerToCatalog qt allCols strfyNum etc = do
@@ -260,7 +261,7 @@ subTableP2
   => QualifiedTable -> Bool -> EventTriggerConf -> m ()
 subTableP2 qt replace etc = do
   allCols <- getCols . _tiFieldInfoMap <$> askTabInfo qt
-  strfyNum <- stringifyNum <$> askSQLGenCtx
+  strfyNum <- _sgcStringifyNumericTypes <$> askSQLGenCtx
   if replace
     then do
     delEventTriggerFromCache qt (etcName etc)

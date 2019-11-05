@@ -264,13 +264,19 @@ traverseTablePerm f (TablePerm boolExp limit) =
 
 type TablePerm = TablePermG S.SQLExp
 
+data SelectOpts
+  = SelectOpts
+  { _soStringifyNumericTypes :: !StringifyNumericTypes
+  , _soEncodeGeoTypes        :: !Bool
+  } deriving (Show, Eq)
+
 data AnnSelG a v
   = AnnSelG
-  { _asnFields   :: !a
-  , _asnFrom     :: !(SelectFromG v)
-  , _asnPerm     :: !(TablePermG v)
-  , _asnArgs     :: !(TableArgsG v)
-  , _asnStrfyNum :: !Bool
+  { _asnFields :: !a
+  , _asnFrom   :: !(SelectFromG v)
+  , _asnPerm   :: !(TablePermG v)
+  , _asnArgs   :: !(TableArgsG v)
+  , _asnOpts   :: !SelectOpts
   } deriving (Show, Eq)
 
 getPermLimit :: AnnSelG a v -> Maybe Int

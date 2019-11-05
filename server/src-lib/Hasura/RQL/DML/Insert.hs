@@ -237,7 +237,7 @@ convInsQ =
   sessVarFromCurrentSetting
   binRHSBuilder
 
-insertP2 :: Bool -> (InsertQueryP1, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
+insertP2 :: StringifyNumericTypes -> (InsertQueryP1, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
 insertP2 strfyNum (u, p) =
   runMutation $ Mutation (iqp1Table u) (insertCTE, p)
                 (iqp1MutFlds u) (iqp1AllCols u) strfyNum
@@ -249,7 +249,7 @@ data ConflictCtx
   | CCDoNothing !(Maybe ConstraintName)
   deriving (Show, Eq)
 
-nonAdminInsert :: Bool -> (InsertQueryP1, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
+nonAdminInsert :: StringifyNumericTypes -> (InsertQueryP1, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
 nonAdminInsert strfyNum (insQueryP1, args) = do
   conflictCtxM <- mapM extractConflictCtx conflictClauseP1
   setConflictCtx conflictCtxM
@@ -294,5 +294,5 @@ runInsert
 runInsert q = do
   res <- convInsQ q
   role <- userRole <$> askUserInfo
-  strfyNum <- stringifyNum <$> askSQLGenCtx
+  strfyNum <- _sgcStringifyNumericTypes <$> askSQLGenCtx
   liftTx $ bool (nonAdminInsert strfyNum res) (insertP2 strfyNum res) $ isAdmin role

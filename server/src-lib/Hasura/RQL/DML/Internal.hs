@@ -1,9 +1,10 @@
 module Hasura.RQL.DML.Internal where
 
-import qualified Database.PG.Query   as Q
-import qualified Hasura.SQL.DML      as S
+import qualified Database.PG.Query           as Q
+import qualified Hasura.SQL.DML              as S
 
 import           Hasura.Prelude
+import           Hasura.RQL.DML.Select.Types
 import           Hasura.RQL.GBoolExp
 import           Hasura.RQL.Types
 import           Hasura.SQL.Error
@@ -13,10 +14,10 @@ import           Hasura.SQL.Value
 import           Control.Lens
 import           Data.Aeson.Types
 
-import qualified Data.HashMap.Strict as M
-import qualified Data.HashSet        as HS
-import qualified Data.Sequence       as DS
-import qualified Data.Text           as T
+import qualified Data.HashMap.Strict         as M
+import qualified Data.HashSet                as HS
+import qualified Data.Sequence               as DS
+import qualified Data.Text                   as T
 
 newtype DMLP1 a
   = DMLP1 {unDMLP1 :: StateT (DS.Seq Q.PrepArg) P1 a}
@@ -273,18 +274,20 @@ dmlTxErrorHandler = mkTxErrorHandler $ \case
     , PGInvalidColumnReference ]
   _ -> False
 
-toJSONableExp :: Bool -> PGColumnType -> S.SQLExp -> S.SQLExp
-toJSONableExp strfyNum colTy expn
-  | isScalarColumnWhere isGeoType colTy =
+toJSONableExp :: SelectOpts -> PGColumnType -> S.SQLExp -> S.SQLExp
+toJSONableExp selectOpts colTy expn
+  | isScalarColumnWhere isGeoType colTy && encodeGeoTypes =
       S.SEFnApp "ST_AsGeoJSON"
       [ expn
       , S.SEUnsafe "15" -- max decimal digits
       , S.SEUnsafe "4"  -- to print out crs
       ] Nothing
       `S.SETyAnn` S.jsonTypeAnn
-  | isScalarColumnWhere isBigNum colTy && strfyNum =
+  | isScalarColumnWhere isBigNum colTy && (stringifyNumerics == SNTEnable) =
     expn `S.SETyAnn` S.textTypeAnn
   | otherwise = expn
+  where
+    SelectOpts stringifyNumerics encodeGeoTypes = selectOpts
 
 -- validate headers
 validateHeaders :: (UserInfoM m, QErrM m) => [T.Text] -> m ()

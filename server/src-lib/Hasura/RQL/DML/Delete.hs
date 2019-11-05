@@ -111,7 +111,7 @@ validateDeleteQ
 validateDeleteQ =
   liftDMLP1 . validateDeleteQWith sessVarFromCurrentSetting binRHSBuilder
 
-deleteQueryToTx :: Bool -> (AnnDel, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
+deleteQueryToTx :: StringifyNumericTypes -> (AnnDel, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
 deleteQueryToTx strfyNum (u, p) =
   runMutation $ Mutation (dqp1Table u) (deleteCTE, p)
                 (dqp1MutFlds u) (dqp1AllCols u) strfyNum
@@ -122,5 +122,5 @@ runDelete
   :: (QErrM m, UserInfoM m, CacheRM m, MonadTx m, HasSQLGenCtx m)
   => DeleteQuery -> m EncJSON
 runDelete q = do
-  strfyNum <- stringifyNum <$> askSQLGenCtx
+  strfyNum <- _sgcStringifyNumericTypes <$> askSQLGenCtx
   validateDeleteQ q >>= liftTx . deleteQueryToTx strfyNum

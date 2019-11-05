@@ -10,6 +10,7 @@ module Hasura.RQL.Types
        , HasHttpManager (..)
        , HasGCtxMap (..)
 
+       , StringifyNumericTypes(..)
        , SQLGenCtx(..)
        , HasSQLGenCtx(..)
 
@@ -148,9 +149,14 @@ class (Monad m) => HasGCtxMap m where
 instance (HasGCtxMap m) => HasGCtxMap (ReaderT r m) where
   askGCtxMap = lift askGCtxMap
 
+data StringifyNumericTypes
+  = SNTEnable
+  | SNTDisable
+  deriving (Show, Eq)
+
 newtype SQLGenCtx
   = SQLGenCtx
-  { stringifyNum :: Bool
+  { _sgcStringifyNumericTypes :: StringifyNumericTypes
   } deriving (Show, Eq)
 
 class (Monad m) => HasSQLGenCtx m where

@@ -125,7 +125,7 @@ main =  do
                 enableTelemetry strfyNum enabledAPIs lqOpts enableAL
                 enabledLogs serverLogLevel) -> do
 
-      let sqlGenCtx = SQLGenCtx strfyNum
+      let sqlGenCtx = SQLGenCtx $ if strfyNum then SNTEnable else SNTDisable
 
       (loggerCtx, logger, pgLogger) <- mkLoggers enabledLogs serverLogLevel
 
@@ -211,7 +211,7 @@ main =  do
       (_, _, pgLogger) <- mkLoggers defaultEnabledLogTypes LevelInfo
       queryBs <- BL.getContents
       ci <- procConnInfo rci
-      let sqlGenCtx = SQLGenCtx False
+      let sqlGenCtx = SQLGenCtx SNTDisable
       pool <- getMinimalPool pgLogger ci
       res <- execQuery queryBs
         & runHasSystemDefinedT (SystemDefined False)

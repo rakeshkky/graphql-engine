@@ -180,8 +180,8 @@ fromField selFrom colGNameMap permFilter permLimitM fld = fieldAsPath fld $ do
   annFlds   <- fromSelSet (_fType fld) $ _fSelSet fld
   let unresolvedPermFltr = fmapAnnBoolExp partialSQLExpToUnresolvedVal permFilter
   let tabPerm = RS.TablePerm unresolvedPermFltr permLimitM
-  strfyNum <- stringifyNum <$> asks getter
-  return $ RS.AnnSelG annFlds selFrom tabPerm tableArgs strfyNum
+  strfyNum <- _sgcStringifyNumericTypes <$> asks getter
+  return $ RS.AnnSelG annFlds selFrom tabPerm tableArgs $ RS.SelectOpts strfyNum True
   where
     args = _fArguments fld
 
@@ -334,8 +334,8 @@ fromFieldByPKey tn colArgMap permFilter fld = fieldAsPath fld $ do
                            permFilter
       tabPerm = RS.TablePerm unresolvedPermFltr Nothing
       tabArgs = RS.noTableArgs { RS._taWhere = Just boolExp}
-  strfyNum <- stringifyNum <$> asks getter
-  return $ RS.AnnSelG annFlds tabFrom tabPerm tabArgs strfyNum
+  strfyNum <- _sgcStringifyNumericTypes <$> asks getter
+  return $ RS.AnnSelG annFlds tabFrom tabPerm tabArgs $ RS.SelectOpts strfyNum True
   where
     fldTy = _fType fld
 
@@ -433,8 +433,8 @@ fromAggField tn colGNameMap permFilter permLimit fld = fieldAsPath fld $ do
         fmapAnnBoolExp partialSQLExpToUnresolvedVal permFilter
   let tabFrom = RS.FromTable tn
       tabPerm = RS.TablePerm unresolvedPermFltr permLimit
-  strfyNum <- stringifyNum <$> asks getter
-  return $ RS.AnnSelG aggSelFlds tabFrom tabPerm tableArgs strfyNum
+  strfyNum <- _sgcStringifyNumericTypes <$> asks getter
+  return $ RS.AnnSelG aggSelFlds tabFrom tabPerm tableArgs $ RS.SelectOpts strfyNum True
   where
     args = _fArguments fld
 

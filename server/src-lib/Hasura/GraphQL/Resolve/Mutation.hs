@@ -174,7 +174,7 @@ convertUpdate opCtx fld = do
   annUpdUnresolved <- convertUpdateP1 opCtx fld
   (annUpdResolved, prepArgs) <- withPrepArgs $ RU.traverseAnnUpd
                                 resolveValPrep annUpdUnresolved
-  strfyNum <- stringifyNum <$> asks getter
+  strfyNum <- _sgcStringifyNumericTypes <$> asks getter
   let whenNonEmptyItems = return $ RU.updateQueryToTx strfyNum
                           (annUpdResolved, prepArgs)
       whenEmptyItems    = return $ return $
@@ -200,7 +200,7 @@ convertDelete opCtx fld = do
                          mutFlds allCols
   (annDelResolved, prepArgs) <- withPrepArgs $ RD.traverseAnnDel
                                 resolveValPrep annDelUnresolved
-  strfyNum <- stringifyNum <$> asks getter
+  strfyNum <- _sgcStringifyNumericTypes <$> asks getter
   return $ RD.deleteQueryToTx strfyNum (annDelResolved, prepArgs)
   where
     DelOpCtx tn _ filterExp allCols = opCtx

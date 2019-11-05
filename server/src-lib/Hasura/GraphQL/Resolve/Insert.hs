@@ -33,6 +33,7 @@ import           Hasura.RQL.DML.Internal           (convPartialSQLExp,
                                                     dmlTxErrorHandler,
                                                     sessVarFromCurrentSetting)
 import           Hasura.RQL.DML.Mutation
+import           Hasura.RQL.DML.Select.Types
 import           Hasura.RQL.GBoolExp               (toSQLBoolExp)
 import           Hasura.RQL.Types
 import           Hasura.SQL.Types
@@ -270,7 +271,7 @@ mkSelCTE allCols colValM =
   in CTEExp selCTE Seq.Empty
 
 execCTEExp
-  :: Bool
+  :: StringifyNumericTypes
   -> QualifiedTable
   -> CTEExp
   -> RR.MutFlds
@@ -279,7 +280,7 @@ execCTEExp strfyNum tn (CTEExp cteExp args) flds =
   Q.getAltJ . runIdentity . Q.getRow
     <$> Q.rawQE dmlTxErrorHandler (Q.fromBuilder sqlBuilder) (toList args) True
   where
-    sqlBuilder = toSQL $ RR.mkSelWith tn cteExp flds True strfyNum
+    sqlBuilder = toSQL $ RR.mkSelWith tn cteExp flds True $ SelectOpts strfyNum True
 
 -- | validate an insert object based on insert columns,
 -- | insert object relations and additional columns from parent
@@ -310,7 +311,7 @@ validateInsert insCols objRels addCols = do
 -- | insert an object relationship and return affected rows
 -- | and parent dependent columns
 insertObjRel
-  :: Bool
+  :: StringifyNumericTypes
   -> RoleName
   -> ObjRelIns
   -> Q.TxE QErr (Int, [PGColWithValue])
@@ -351,7 +352,7 @@ decodeEncJSON =
 
 -- | insert an array relationship and return affected rows
 insertArrRel
-  :: Bool
+  :: StringifyNumericTypes
   -> RoleName
   -> [PGColWithValue]
   -> ArrRelIns
@@ -375,7 +376,7 @@ insertArrRel strfyNum role resCols arrRelIns =
 
 -- | insert an object with object and array relationships
 insertObj
-  :: Bool
+  :: StringifyNumericTypes
   -> RoleName
   -> QualifiedTable
   -> SingleObjIns
@@ -398,7 +399,7 @@ insertObj strfyNum role tn singleObjIns addCols = do
     mkInsertQ vn onConflictM finalInsCols defVals role
 
   RI.setConflictCtx ccM
-  MutateResp affRows colVals <- mutateAndFetchCols tn allCols (cte, insPArgs) strfyNum
+  MutateResp affRows colVals <- mutateAndFetchCols tn allCols (cte, insPArgs)
   colValM <- asSingleObject colVals
   let cteExp = mkSelCTE allCols colValM
 
@@ -428,7 +429,7 @@ insertObj strfyNum role tn singleObjIns addCols = do
 
 -- | insert multiple Objects in postgres
 insertMultipleObjects
-  :: Bool
+  :: StringifyNumericTypes
   -> RoleName
   -> QualifiedTable
   -> MultiObjIns
@@ -516,7 +517,7 @@ convertInsert role tn fld = prefixErrPath fld $ do
       let multiObjIns = AnnIns annInsObjs conflictClauseM
                         vn tableCols defValMapRes
           tableCols = Map.elems tableColMap
-      strfyNum <- stringifyNum <$> asks getter
+      strfyNum <- _sgcStringifyNumericTypes <$> asks getter
       return $ prefixErrPath fld $ insertMultipleObjects strfyNum role tn
         multiObjIns [] mutFlds "objects"
     withEmptyObjs mutFlds =

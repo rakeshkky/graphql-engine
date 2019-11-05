@@ -29,7 +29,7 @@ data Mutation
   , _mQuery    :: !(S.CTE, DS.Seq Q.PrepArg)
   , _mFields   :: !MutFlds
   , _mCols     :: ![PGColumnInfo]
-  , _mStrfyNum :: !Bool
+  , _mStrfyNum :: !StringifyNumericTypes
   } deriving (Show, Eq)
 
 runMutation :: Mutation -> Q.TxE QErr EncJSON
@@ -43,14 +43,14 @@ mutateAndReturn (Mutation qt (cte, p) mutFlds _ strfyNum) =
     <$> Q.rawQE dmlTxErrorHandler (Q.fromBuilder $ toSQL selWith)
         (toList p) True
   where
-    selWith = mkSelWith qt cte mutFlds False strfyNum
+    selWith = mkSelWith qt cte mutFlds False $ SelectOpts strfyNum True
 
 mutateAndSel :: Mutation -> Q.TxE QErr EncJSON
 mutateAndSel (Mutation qt q mutFlds allCols strfyNum) = do
   -- Perform mutation and fetch unique columns
-  MutateResp _ columnVals <- mutateAndFetchCols qt allCols q strfyNum
+  MutateResp _ columnVals <- mutateAndFetchCols qt allCols q
   let selCTE = mkSelCTEFromColumnVals allCols columnVals
-      selWith = mkSelWith qt selCTE mutFlds False strfyNum
+      selWith = mkSelWith qt selCTE mutFlds False $ SelectOpts strfyNum True
   -- Perform select query and fetch returning fields
   encJFromBS . runIdentity . Q.getRow
     <$> Q.rawQE dmlTxErrorHandler (Q.fromBuilder $ toSQL selWith) [] True
@@ -60,9 +60,8 @@ mutateAndFetchCols
   :: QualifiedTable
   -> [PGColumnInfo]
   -> (S.CTE, DS.Seq Q.PrepArg)
-  -> Bool
   -> Q.TxE QErr MutateResp
-mutateAndFetchCols qt cols (cte, p) strfyNum =
+mutateAndFetchCols qt cols (cte, p) =
   Q.getAltJ . runIdentity . Q.getRow
     <$> Q.rawQE dmlTxErrorHandler (Q.fromBuilder sql) (toList p) True
   where
@@ -85,8 +84,9 @@ mutateAndFetchCols qt cols (cte, p) strfyNum =
       { S.selExtr = [S.Extractor S.countStar Nothing]
       , S.selFrom = Just $ S.FromExp [S.FIIden aliasIden]
       }
+    selectOpts = SelectOpts SNTEnable False
     colSel = S.SESelect $ mkSQLSelect False $
-             AnnSelG selFlds tabFrom tabPerm noTableArgs strfyNum
+             AnnSelG selFlds tabFrom tabPerm noTableArgs selectOpts
 
 mkSelCTEFromColumnVals :: [PGColumnInfo] -> [ColVals] -> S.CTE
 mkSelCTEFromColumnVals allCols columnVals =
@@ -106,13 +106,9 @@ mkSelCTEFromColumnVals allCols columnVals =
 
           definitions = flip map allCols $ \pci ->
                         S.ColumnDefinitionItem (pgiColumn pci)
-                        (toPGScalarType $ pgiType pci)
+                        (unsafePGColumnToRepresentation $ pgiType pci)
 
           functionAlias = S.FunctionAlias (S.Alias $ Iden "json_to_recordset_row")
                           $ Just definitions
 
       in S.mkFunctionFromItem jsonToRecordsetFunction functionArgs $ Just functionAlias
-
-    toPGScalarType (PGColumnScalar scalar) =
-      if isGeoType scalar then PGJSON else scalar
-    toPGScalarType (PGColumnEnumReference _) = PGText

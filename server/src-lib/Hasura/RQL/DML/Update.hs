@@ -208,7 +208,7 @@ validateUpdateQuery =
   liftDMLP1 . validateUpdateQueryWith sessVarFromCurrentSetting binRHSBuilder
 
 updateQueryToTx
-  :: Bool -> (AnnUpd, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
+  :: StringifyNumericTypes -> (AnnUpd, DS.Seq Q.PrepArg) -> Q.TxE QErr EncJSON
 updateQueryToTx strfyNum (u, p) =
   runMutation $ Mutation (uqp1Table u) (updateCTE, p)
                 (uqp1MutFlds u) (uqp1AllCols u) strfyNum
@@ -219,5 +219,5 @@ runUpdate
   :: (QErrM m, UserInfoM m, CacheRWM m, MonadTx m, HasSQLGenCtx m)
   => UpdateQuery -> m EncJSON
 runUpdate q = do
-  strfyNum <- stringifyNum <$> askSQLGenCtx
+  strfyNum <- _sgcStringifyNumericTypes <$> askSQLGenCtx
   validateUpdateQuery q >>= liftTx . updateQueryToTx strfyNum

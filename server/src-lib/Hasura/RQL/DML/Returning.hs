@@ -78,8 +78,8 @@ qualTableToAliasIden :: QualifiedTable -> Iden
 qualTableToAliasIden qt =
   Iden $ snakeCaseTable qt <> "__mutation_result_alias"
 
-mkMutFldExp :: QualifiedTable -> Bool -> Bool -> MutFld -> S.SQLExp
-mkMutFldExp qt singleObj strfyNum = \case
+mkMutFldExp :: QualifiedTable -> Bool -> SelectOpts -> MutFld -> S.SQLExp
+mkMutFldExp qt singleObj selectOpts = \case
   MCount -> S.SESelect $
     S.mkSelect
     { S.selExtr = [S.Extractor S.countStar Nothing]
@@ -91,13 +91,13 @@ mkMutFldExp qt singleObj strfyNum = \case
     let tabFrom = FromIden $ qualTableToAliasIden qt
         tabPerm = TablePerm annBoolExpTrue Nothing
     in S.SESelect $ mkSQLSelect singleObj $
-       AnnSelG selFlds tabFrom tabPerm noTableArgs strfyNum
+       AnnSelG selFlds tabFrom tabPerm noTableArgs selectOpts
   where
     frmItem = S.FIIden $ qualTableToAliasIden qt
 
 mkSelWith
-  :: QualifiedTable -> S.CTE -> MutFlds -> Bool -> Bool -> S.SelectWith
-mkSelWith qt cte mutFlds singleObj strfyNum =
+  :: QualifiedTable -> S.CTE -> MutFlds -> Bool -> SelectOpts -> S.SelectWith
+mkSelWith qt cte mutFlds singleObj selectOpts =
   S.SelectWith [(alias, cte)] sel
   where
     alias = S.Alias $ qualTableToAliasIden qt
@@ -107,7 +107,7 @@ mkSelWith qt cte mutFlds singleObj strfyNum =
 
     jsonBuildObjArgs =
       flip concatMap mutFlds $
-      \(k, mutFld) -> [S.SELit k, mkMutFldExp qt singleObj strfyNum mutFld]
+      \(k, mutFld) -> [S.SELit k, mkMutFldExp qt singleObj selectOpts mutFld]
 
 checkRetCols
   :: (UserInfoM m, QErrM m)
