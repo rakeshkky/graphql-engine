@@ -173,6 +173,7 @@ library
 
                      -- HTTP compression
                      , zlib
+                     , hs-brotli
 
   exposed-modules:     Hasura.Prelude
                      , Hasura.Logging

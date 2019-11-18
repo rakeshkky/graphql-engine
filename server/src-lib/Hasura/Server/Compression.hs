@@ -7,8 +7,9 @@ where
 
 import           Hasura.Prelude
 
-import           Hasura.Server.Utils       (gzipHeader)
+import           Hasura.Server.Utils       (brHeader, gzipHeader)
 
+import qualified Codec.Compression.Brotli  as BR
 import qualified Codec.Compression.GZip    as GZ
 import qualified Data.ByteString.Lazy      as BL
 import qualified Data.Text                 as T
@@ -16,10 +17,12 @@ import qualified Network.HTTP.Types.Header as NH
 
 data CompressionType
   = CTGZip
+  | CTBrotli
   deriving (Show, Eq)
 
 compressionTypeToTxt :: CompressionType -> T.Text
 compressionTypeToTxt CTGZip   = "gzip"
+compressionTypeToTxt CTBrotli = "brotli"
 
 compressResponse
   :: NH.RequestHeaders
@@ -30,12 +33,20 @@ compressResponse reqHeaders unCompressedResp =
       appendCompressionType (res, headerM) = (res, headerM, compressionTypeM)
       gzipCompressionParams =
         GZ.defaultCompressParams{GZ.compressLevel = GZ.compressionLevel 1}
+      brotliCompressionSettings =
+        BR.defaultCompressionSettings{BR.compressionQuality = 1}
   in appendCompressionType $ case compressionTypeM of
-       Just CTGZip -> (GZ.compressWith gzipCompressionParams unCompressedResp, Just gzipHeader)
-       Nothing     -> (unCompressedResp, Nothing)
+       Just CTGZip   -> ( GZ.compressWith gzipCompressionParams unCompressedResp
+                        , Just gzipHeader
+                        )
+       Just CTBrotli -> ( BR.compressWith brotliCompressionSettings unCompressedResp
+                        , Just brHeader
+                        )
+       Nothing       -> (unCompressedResp, Nothing)
 
 getRequestedCompression :: NH.RequestHeaders -> Maybe CompressionType
 getRequestedCompression reqHeaders
+  | "br" `elem` acceptEncodingVals   = Just CTBrotli
   | "gzip" `elem` acceptEncodingVals = Just CTGZip
   | otherwise                        = Nothing
   where
