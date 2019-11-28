@@ -60,21 +60,21 @@ resolveComputedField
   :: ( MonadReusability m, MonadReader r m, Has FieldMap r
      , Has OrdByCtx r, Has SQLGenCtx r, MonadError QErr m
      )
-  => ComputedField -> Field -> m (RS.ComputedFieldSel UnresolvedVal)
+  => ComputedField -> Field -> m (RS.AnnComputedFieldG UnresolvedVal)
 resolveComputedField computedField fld = fieldAsPath fld $ do
   funcArgsM <- withArgM (_fArguments fld) "args" $ parseFunctionArgs argSeq argFn
   let funcArgs = fromMaybe RS.emptyFunctionArgsExp funcArgsM
       argsWithTableArgument = withTableArgument funcArgs
-  case fieldType of
+  RS.AnnComputedFieldG name <$> case fieldType of
     CFTScalar scalarTy -> do
       colOpM <- argsToColOp $ _fArguments fld
       pure $ RS.CFSScalar $
         RS.ComputedFieldScalarSel qf argsWithTableArgument scalarTy colOpM
     CFTTable (ComputedFieldTable _ cols permFilter permLimit) -> do
       let functionFrom = RS.FromFunction qf argsWithTableArgument
-      RS.CFSTable <$> fromField functionFrom cols permFilter permLimit fld
+      RS.CFSSetofTable <$> fromField functionFrom cols permFilter permLimit fld
   where
-    ComputedField _ function argSeq fieldType = computedField
+    ComputedField name function argSeq fieldType = computedField
     ComputedFieldFunction qf _ tableArg _ = function
     argFn = IFAUnknown
     withTableArgument resolvedArgs =

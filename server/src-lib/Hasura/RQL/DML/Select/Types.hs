@@ -3,6 +3,7 @@
 
 module Hasura.RQL.DML.Select.Types where
 
+import           Control.Lens               (makeLenses, makePrisms)
 import           Data.Aeson.Types
 import           Language.Haskell.TH.Syntax (Lift)
 
@@ -105,7 +106,7 @@ data ComputedFieldScalarSel v
 
 data ComputedFieldSel v
   = CFSScalar !(ComputedFieldScalarSel v)
-  | CFSTable !(AnnSimpleSelG v)
+  | CFSSetofTable !(AnnSimpleSelG v)
   deriving (Show, Eq)
 
 traverseComputedFieldSel
@@ -113,8 +114,21 @@ traverseComputedFieldSel
   => (v -> f w)
   -> ComputedFieldSel v -> f (ComputedFieldSel w)
 traverseComputedFieldSel fv = \case
-  CFSScalar scalarSel -> CFSScalar <$> traverse fv scalarSel
-  CFSTable tableSel   -> CFSTable <$> traverseAnnSimpleSel fv tableSel
+  CFSScalar scalarSel    -> CFSScalar <$> traverse fv scalarSel
+  CFSSetofTable tableSel -> CFSSetofTable <$> traverseAnnSimpleSel fv tableSel
+
+data AnnComputedFieldG v
+  = AnnComputedFieldG
+  { _acfgName   :: !ComputedFieldName
+  , _acfgSelect :: !(ComputedFieldSel v)
+  } deriving (Show, Eq)
+
+traverseAnnComputedField
+  :: (Applicative f)
+  => (v -> f w)
+  -> AnnComputedFieldG v -> f (AnnComputedFieldG w)
+traverseAnnComputedField f (AnnComputedFieldG name select) =
+  AnnComputedFieldG name <$> traverseComputedFieldSel f select
 
 type Fields a = [(FieldName, a)]
 
@@ -136,6 +150,8 @@ type ArrSel = ArrSelG S.SQLExp
 
 type ArrSelFldsG v = Fields (ArrSelG v)
 
+type SetofTableComputedFields v = Fields (ComputedFieldName, AnnSimpleSelG v)
+
 data ColOp
   = ColOp
   { _colOp  :: S.SQLOp
@@ -156,7 +172,7 @@ data AnnFldG v
   = FCol !AnnColField
   | FObj !(ObjSelG v)
   | FArr !(ArrSelG v)
-  | FComputedField !(ComputedFieldSel v)
+  | FComputedField !(AnnComputedFieldG v)
   | FExp !T.Text
   deriving (Show, Eq)
 
@@ -175,7 +191,7 @@ traverseAnnFld f = \case
   FCol colFld -> pure $ FCol colFld
   FObj sel -> FObj <$> traverse (traverseAnnSimpleSel f) sel
   FArr sel -> FArr <$> traverseArrSel f sel
-  FComputedField sel -> FComputedField <$> traverseComputedFieldSel f sel
+  FComputedField sel -> FComputedField <$> traverseAnnComputedField f sel
   FExp t -> FExp <$> pure t
 
 type AnnFld = AnnFldG S.SQLExp
@@ -400,7 +416,7 @@ data BaseNode
   , _bnExtrs               :: !(HM.HashMap S.Alias S.SQLExp)
   , _bnObjs                :: !(HM.HashMap RelName ObjNode)
   , _bnArrs                :: !(HM.HashMap S.Alias ArrNode)
-  , _bnComputedFieldTables :: !(HM.HashMap FieldName BaseNode)
+  , _bnComputedFieldTables :: !(HM.HashMap S.Alias ComputedFieldNode)
   } deriving (Show, Eq)
 
 mergeBaseNodes :: BaseNode -> BaseNode -> BaseNode
@@ -409,11 +425,11 @@ mergeBaseNodes lNodeDet rNodeDet =
   (HM.union lExtrs rExtrs)
   (HM.unionWith mergeObjNodes lObjs rObjs)
   (HM.unionWith mergeArrNodes lArrs rArrs)
-  (HM.unionWith mergeBaseNodes lCompCols rCompCols)
+  (HM.unionWith mergeComputedFieldNodes lCompFieldNodes rCompFieldNodes)
   where
-    BaseNode pfx dExp f whr ordBy limit offset lExtrs lObjs lArrs lCompCols
+    BaseNode pfx dExp f whr ordBy limit offset lExtrs lObjs lArrs lCompFieldNodes
       = lNodeDet
-    BaseNode _   _    _ _   _     _     _      rExtrs rObjs rArrs rCompCols
+    BaseNode _   _    _ _   _     _     _      rExtrs rObjs rArrs rCompFieldNodes
       = rNodeDet
 
 data OrderByNode
@@ -477,8 +493,27 @@ data ArrNodeInfo
   , _aniSubQueryRequired :: !Bool
   } deriving (Show, Eq)
 
+data ComputedFieldNode
+  = ComputedFieldNode
+  { _cfnExtractor :: ![S.Extractor]
+  , _cfnNode      :: !BaseNode
+  } deriving (Show, Eq)
+
+mergeComputedFieldNodes :: ComputedFieldNode -> ComputedFieldNode -> ComputedFieldNode
+mergeComputedFieldNodes lNode rNode =
+  ComputedFieldNode (lExtrs `union` rExtrs) $ mergeBaseNodes lBN rBN
+  where
+    ComputedFieldNode lExtrs lBN = lNode
+    ComputedFieldNode rExtrs rBN = rNode
+
 data Prefixes
   = Prefixes
   { _pfThis :: !Iden -- Current node prefix
   , _pfBase :: !Iden -- Base table row identifier for computed field function
   } deriving (Show, Eq)
+
+-- Template haskell
+$(makePrisms ''ComputedFieldSel)
+$(makeLenses ''AnnComputedFieldG)
+$(makePrisms ''AnnFldG)
+$(makePrisms ''OrderByNode)
