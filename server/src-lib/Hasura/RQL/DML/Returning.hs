@@ -62,7 +62,7 @@ pgColsFromMutFld = \case
 pgColsFromMutFlds :: MutFlds -> [(PGCol, PGColumnType)]
 pgColsFromMutFlds = concatMap (pgColsFromMutFld . snd)
 
-pgColsToSelFlds :: [PGColumnInfo] -> [(FieldName, AnnFld)]
+pgColsToSelFlds :: [PGColumnInfo] -> [(FieldName, AnnFldG S.SQLExp)]
 pgColsToSelFlds cols =
   flip map cols $
   \pgColInfo -> (fromPGCol $ pgiColumn pgColInfo, mkAnnColField pgColInfo Nothing)
@@ -90,7 +90,7 @@ mkMutFldExp qt singleObj strfyNum = \case
     -- let tabFrom = TableFrom qt $ Just frmItem
     let tabFrom = FromIden $ qualTableToAliasIden qt
         tabPerm = TablePerm annBoolExpTrue Nothing
-    in S.SESelect $ mkSQLSelect singleObj $
+    in S.SESelect $ mkSQLSelect singleObj $ fromSQLAnnSimpleSel $
        AnnSelG selFlds tabFrom tabPerm noTableArgs strfyNum
   where
     frmItem = S.FIIden $ qualTableToAliasIden qt

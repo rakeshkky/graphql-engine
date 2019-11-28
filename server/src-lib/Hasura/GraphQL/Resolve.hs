@@ -27,6 +27,7 @@ import           Hasura.RQL.DML.Internal           (currentSession,
                                                     sessVarFromCurrentSetting)
 import           Hasura.RQL.Types
 import           Hasura.SQL.Types
+import           Hasura.SQL.Value
 
 import qualified Hasura.GraphQL.Resolve.Insert     as RI
 import qualified Hasura.GraphQL.Resolve.Introspect as RIntro
@@ -80,10 +81,10 @@ queryFldToSQL
 queryFldToSQL fn fld = do
   pgAST <- queryFldToPGAST fld
   resolvedAST <- flip RS.traverseQueryRootFldAST pgAST $ \case
-    UVPG annPGVal -> fn annPGVal
-    UVSQL sqlExp  -> return sqlExp
-    UVSessVar colTy sessVar -> sessVarFromCurrentSetting colTy sessVar
-    UVSession -> pure currentSession
+    UVPG annPGVal -> RVPrep (_apvValue annPGVal) <$> fn annPGVal
+    UVSQL sqlExp  -> pure $ RVSql sqlExp
+    UVSessVar colTy sessVar -> RVSql <$> sessVarFromCurrentSetting colTy sessVar
+    UVSession -> RVSql <$> pure currentSession
   return $ RS.toPGQuery resolvedAST
 
 mutFldToTx

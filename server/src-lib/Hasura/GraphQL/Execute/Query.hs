@@ -152,26 +152,24 @@ getNextArgNum = do
   put $ PlanningSt (curArgNum + 1) vars prepped
   return curArgNum
 
-prepareWithPlan :: (MonadState PlanningSt m) => UnresolvedVal -> m S.SQLExp
+prepareWithPlan :: (MonadState PlanningSt m) => UnresolvedVal -> m ResolvedVal
 prepareWithPlan = \case
   R.UVPG annPGVal -> do
     let AnnPGVal varM _ colVal = annPGVal
-    argNum <- case varM of
-      Just var -> getVarArgNum var
-      Nothing  -> getNextArgNum
+    argNum <- maybe getNextArgNum getVarArgNum varM
     addPrepArg argNum (toBinaryValue colVal, pstValue colVal)
-    return $ toPrepParam argNum (pstType colVal)
+    return $ RVPrep colVal $ toPrepParam argNum (pstType colVal)
 
   R.UVSessVar ty sessVar -> do
     let sessVarVal =
           S.SEOpApp (S.SQLOp "->>")
           [currentSession, S.SELit $ T.toLower sessVar]
-    return $ flip S.SETyAnn (S.mkTypeAnn ty) $ case ty of
+    return $ RVSql $ flip S.SETyAnn (S.mkTypeAnn ty) $ case ty of
       PGTypeScalar colTy -> withConstructorFn colTy sessVarVal
       PGTypeArray _      -> sessVarVal
 
-  R.UVSQL sqlExp -> pure sqlExp
-  R.UVSession    -> pure currentSession
+  R.UVSQL sqlExp -> pure $ RVSql sqlExp
+  R.UVSession    -> pure $ RVSql currentSession
   where
     currentSession = S.SEPrep 1
 

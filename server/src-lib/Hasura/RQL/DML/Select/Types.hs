@@ -16,6 +16,7 @@ import           Hasura.Prelude
 import           Hasura.RQL.Types
 import qualified Hasura.SQL.DML             as S
 import           Hasura.SQL.Types
+import           Hasura.SQL.Value
 
 type SelectQExt = SelectG ExtCol BoolExp Int
 -- Columns in RQL
@@ -54,7 +55,7 @@ data AnnObColG v
   = AOCPG !PGColumnInfo
   | AOCObj !RelInfo !(AnnBoolExp v) !(AnnObColG v)
   | AOCAgg !RelInfo !(AnnBoolExp v) !AnnAggOrdBy
-  deriving (Show, Eq)
+  deriving (Show, Eq, Functor)
 
 traverseAnnObCol
   :: (Applicative f)
@@ -70,7 +71,7 @@ traverseAnnObCol f = \case
     <$> traverseAnnBoolExp f annBoolExp
     <*> pure annAggOb
 
-type AnnObCol = AnnObColG S.SQLExp
+type AnnObCol = AnnObColG ResolvedVal
 
 type AnnOrderByItemG v = OrderByItemG (AnnObColG v)
 
@@ -80,7 +81,10 @@ traverseAnnOrderByItem
 traverseAnnOrderByItem f =
   traverse (traverseAnnObCol f)
 
-type AnnOrderByItem = AnnOrderByItemG S.SQLExp
+type AnnOrderByItem = AnnOrderByItemG ResolvedVal
+
+fromAnnBoolExpResolved :: AnnBoolExp ResolvedVal -> AnnBoolExp S.SQLExp
+fromAnnBoolExpResolved = fmap (fmap resolvedValToSQLExp)
 
 data AnnRelG a
   = AnnRelG
@@ -90,11 +94,11 @@ data AnnRelG a
   } deriving (Show, Eq, Functor, Foldable, Traversable)
 
 type ObjSelG v = AnnRelG (AnnSimpleSelG v)
-type ObjSel = ObjSelG S.SQLExp
+type ObjSel = ObjSelG ResolvedVal
 
 type ArrRelG v = AnnRelG (AnnSimpleSelG v)
 type ArrRelAggG v = AnnRelG (AnnAggSelG v)
-type ArrRelAgg = ArrRelAggG S.SQLExp
+type ArrRelAgg = ArrRelAggG ResolvedVal
 
 data ComputedFieldScalarSel v
   = ComputedFieldScalarSel
@@ -146,7 +150,7 @@ traverseArrSel f = \case
   ASSimple arrRel -> ASSimple <$> traverse (traverseAnnSimpleSel f) arrRel
   ASAgg arrRelAgg -> ASAgg <$> traverse (traverseAnnAggSel f) arrRelAgg
 
-type ArrSel = ArrSelG S.SQLExp
+type ArrSel = ArrSelG ResolvedVal
 
 type ArrSelFldsG v = Fields (ArrSelG v)
 
@@ -176,6 +180,9 @@ data AnnFldG v
   | FExp !T.Text
   deriving (Show, Eq)
 
+fmapAnnFld :: (v -> w) -> AnnFldG v -> AnnFldG w
+fmapAnnFld f = runIdentity . traverseAnnFld (Identity . f)
+
 mkAnnColField :: PGColumnInfo -> Maybe ColOp -> AnnFldG v
 mkAnnColField ci colOpM =
   FCol $ AnnColField ci False colOpM
@@ -194,7 +201,7 @@ traverseAnnFld f = \case
   FComputedField sel -> FComputedField <$> traverseAnnComputedField f sel
   FExp t -> FExp <$> pure t
 
-type AnnFld = AnnFldG S.SQLExp
+type AnnFld = AnnFldG ResolvedVal
 
 data TableArgsG v
   = TableArgs
@@ -203,7 +210,7 @@ data TableArgsG v
   , _taLimit    :: !(Maybe Int)
   , _taOffset   :: !(Maybe S.SQLExp)
   , _taDistCols :: !(Maybe (NE.NonEmpty PGCol))
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Functor)
 
 traverseTableArgs
   :: (Applicative f)
@@ -217,7 +224,10 @@ traverseTableArgs f (TableArgs wh ordBy lmt ofst distCols) =
   <*> pure ofst
   <*> pure distCols
 
-type TableArgs = TableArgsG S.SQLExp
+type TableArgs = TableArgsG ResolvedVal
+
+equateTableArgs :: TableArgs -> TableArgs -> Bool
+equateTableArgs = (==)
 
 noTableArgs :: TableArgsG v
 noTableArgs = TableArgs Nothing Nothing Nothing Nothing Nothing
@@ -261,9 +271,9 @@ traverseTableAggFld f = \case
     TAFNodes <$> traverse (traverse (traverseAnnFld f)) annFlds
   TAFExp t -> pure $ TAFExp t
 
-type TableAggFld = TableAggFldG S.SQLExp
+type TableAggFld = TableAggFldG ResolvedVal
 type TableAggFldsG v = Fields (TableAggFldG v)
-type TableAggFlds = TableAggFldsG S.SQLExp
+type TableAggFlds = TableAggFldsG ResolvedVal
 
 data ArgumentExp a
   = AETableRow
@@ -278,13 +288,16 @@ data SelectFromG v
   | FromFunction !QualifiedFunction !(FunctionArgsExpTableRow v)
   deriving (Show, Eq, Functor, Foldable, Traversable)
 
-type SelectFrom = SelectFromG S.SQLExp
+type SelectFrom = SelectFromG ResolvedVal
+
+equateSelectFrom :: SelectFrom -> SelectFrom -> Bool
+equateSelectFrom = (==)
 
 data TablePermG v
   = TablePerm
   { _tpFilter :: !(AnnBoolExp v)
   , _tpLimit  :: !(Maybe Int)
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Functor)
 
 traverseTablePerm
   :: (Applicative f)
@@ -296,7 +309,7 @@ traverseTablePerm f (TablePerm boolExp limit) =
   <$> traverseAnnBoolExp f boolExp
   <*> pure limit
 
-type TablePerm = TablePermG S.SQLExp
+type TablePerm = TablePermG ResolvedVal
 
 data AnnSelG a v
   = AnnSelG
@@ -305,7 +318,7 @@ data AnnSelG a v
   , _asnPerm     :: !(TablePermG v)
   , _asnArgs     :: !(TableArgsG v)
   , _asnStrfyNum :: !Bool
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Functor)
 
 getPermLimit :: AnnSelG a v -> Maybe Int
 getPermLimit = _tpLimit . _asnPerm
@@ -337,10 +350,15 @@ traverseAnnSel f1 f2 (AnnSelG flds tabFrom perm args strfyNum) =
   <*> pure strfyNum
 
 type AnnSimpleSelG v = AnnSelG (AnnFldsG v) v
-type AnnSimpleSel = AnnSimpleSelG S.SQLExp
+type AnnSimpleSel = AnnSimpleSelG ResolvedVal
+
+fromSQLAnnSimpleSel :: AnnSimpleSelG S.SQLExp -> AnnSimpleSelG ResolvedVal
+fromSQLAnnSimpleSel = runIdentity . traverseAnnSel
+                      (Identity . map (second (fmapAnnFld liftSQLExpToResolvedVal)))
+                      (Identity . liftSQLExpToResolvedVal)
 
 type AnnAggSelG v = AnnSelG (TableAggFldsG v) v
-type AnnAggSel = AnnAggSelG S.SQLExp
+type AnnAggSel = AnnAggSelG ResolvedVal
 
 data FunctionArgsExpG a
   = FunctionArgsExp
@@ -384,7 +402,7 @@ traverseAnnFnSel fs fv (AnnFnSel fn fnArgs s) =
   AnnFnSel fn <$> traverse fv fnArgs <*> fs s
 
 type AnnFnSelSimpleG v = AnnFnSelG (AnnSimpleSelG v) v
-type AnnFnSelSimple = AnnFnSelSimpleG S.SQLExp
+type AnnFnSelSimple = AnnFnSelSimpleG ResolvedVal
 
 traverseAnnFnSimple
   :: (Applicative f)
@@ -394,7 +412,7 @@ traverseAnnFnSimple f =
   traverseAnnFnSel (traverseAnnSimpleSel f) f
 
 type AnnFnSelAggG v = AnnFnSelG (AnnAggSelG v) v
-type AnnFnSelAgg = AnnFnSelAggG S.SQLExp
+type AnnFnSelAgg = AnnFnSelAggG ResolvedVal
 
 traverseAnnFnAgg
   :: (Applicative f)
@@ -444,7 +462,7 @@ data ArrRelCtxG v
   , aacAggOrdBys :: ![RelName]
   } deriving (Show, Eq)
 
-type ArrRelCtx = ArrRelCtxG S.SQLExp
+type ArrRelCtx = ArrRelCtxG ResolvedVal
 
 emptyArrRelCtx :: ArrRelCtxG a
 emptyArrRelCtx = ArrRelCtx [] []
@@ -454,7 +472,7 @@ data ArrNodeItemG v
   | ANIAggOrdBy !RelName
   deriving (Show, Eq)
 
-type ArrNodeItem = ArrNodeItemG S.SQLExp
+type ArrNodeItem = ArrNodeItemG ResolvedVal
 
 data ObjNode
   = ObjNode

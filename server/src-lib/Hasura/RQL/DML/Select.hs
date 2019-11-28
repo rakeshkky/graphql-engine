@@ -24,6 +24,7 @@ import           Hasura.RQL.DML.Internal
 import           Hasura.RQL.DML.Select.Internal
 import           Hasura.RQL.Types
 import           Hasura.SQL.Types
+import           Hasura.SQL.Value
 
 import qualified Database.PG.Query              as Q
 import qualified Hasura.SQL.DML                 as S
@@ -102,6 +103,9 @@ resolveStar fim spi (SelectG selCols mWh mOb mLt mOf) = do
     equals (ECRel x _ _) (ECRel y _ _) = x == y
     equals _ _                         = False
 
+annBoolExpSQLToResolved :: AnnBoolExpSQL -> AnnBoolExp ResolvedVal
+annBoolExpSQLToResolved = fmap (fmap liftSQLExpToResolvedVal)
+
 convOrderByElem
   :: (UserInfoM m, QErrM m, CacheRM m)
   => SessVarBldr m
@@ -147,7 +151,8 @@ convOrderByElem sessVarBldr (flds, spi) = \case
           ," and can't be used in 'order_by'"
           ]
         (relFim, relSpi) <- fetchRelDet (riName relInfo) (riRTable relInfo)
-        resolvedSelFltr <- convAnnBoolExpPartialSQL sessVarBldr $ spiFilter relSpi
+        resolvedSelFltr <- fmap annBoolExpSQLToResolved $
+                           convAnnBoolExpPartialSQL sessVarBldr $ spiFilter relSpi
         AOCObj relInfo resolvedSelFltr <$>
           convOrderByElem sessVarBldr (relFim, relSpi) rest
 
@@ -177,7 +182,7 @@ convSelectQ fieldInfoMap selPermInfo selQ sessVarBldr prepValBldr = do
 
   -- Convert where clause
   wClause <- forM (sqWhere selQ) $ \be ->
-    withPathK "where" $
+    withPathK "where" $ annBoolExpSQLToResolved <$>
     convBoolExp fieldInfoMap selPermInfo be sessVarBldr prepValBldr
 
   annOrdByML <- forM (sqOrderBy selQ) $ \(OrderByExp obItems) ->
@@ -190,8 +195,8 @@ convSelectQ fieldInfoMap selPermInfo selQ sessVarBldr prepValBldr = do
   withPathK "limit" $ mapM_ onlyPositiveInt mQueryLimit
   withPathK "offset" $ mapM_ onlyPositiveInt mQueryOffset
 
-  resolvedSelFltr <- convAnnBoolExpPartialSQL sessVarBldr $
-                     spiFilter selPermInfo
+  resolvedSelFltr <- fmap annBoolExpSQLToResolved $
+                     convAnnBoolExpPartialSQL sessVarBldr $ spiFilter selPermInfo
 
   let tabFrom = FromTable $ spiTable selPermInfo
       tabPerm = TablePerm resolvedSelFltr mPermLimit

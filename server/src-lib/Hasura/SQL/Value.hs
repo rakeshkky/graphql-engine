@@ -12,6 +12,10 @@ module Hasura.SQL.Value
   , toBinaryValue
   , toTxtValue
   , toPrepParam
+
+  , ResolvedVal(..)
+  , resolvedValToSQLExp
+  , liftSQLExpToResolvedVal
   ) where
 
 import           Hasura.SQL.GeoJSON
@@ -194,3 +198,21 @@ toBinaryValue = binEncoder . pstValue
 toTxtValue :: WithScalarType PGScalarValue -> S.SQLExp
 toTxtValue (WithScalarType ty val) =
   S.withTyAnn ty . withConstructorFn ty $ txtEncoder val
+
+data ResolvedVal
+  = RVPrep !(WithScalarType PGScalarValue) !S.SQLExp
+  | RVSql !S.SQLExp
+  deriving Show
+
+instance Eq ResolvedVal where
+  RVPrep lVal _ == RVPrep rVal _ = lVal == rVal
+  RVSql lVal    == RVSql rVal    = lVal == rVal
+  _             == _             = False
+
+resolvedValToSQLExp :: ResolvedVal -> S.SQLExp
+resolvedValToSQLExp = \case
+  RVPrep _ sqlExp -> sqlExp
+  RVSql sqlExp    -> sqlExp
+
+liftSQLExpToResolvedVal :: S.SQLExp -> ResolvedVal
+liftSQLExpToResolvedVal = RVSql

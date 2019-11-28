@@ -537,7 +537,7 @@ data QueryRootFldAST v
   deriving (Show, Eq)
 
 type QueryRootFldUnresolved = QueryRootFldAST UnresolvedVal
-type QueryRootFldResolved = QueryRootFldAST S.SQLExp
+type QueryRootFldResolved = QueryRootFldAST ResolvedVal
 
 traverseQueryRootFldAST
   :: (Applicative f)

@@ -57,8 +57,8 @@ runExplain ctx m =
 
 resolveVal
   :: (MonadError QErr m)
-  => UserInfo -> RS.UnresolvedVal -> m S.SQLExp
-resolveVal userInfo = \case
+  => UserInfo -> RS.UnresolvedVal -> m ResolvedVal
+resolveVal userInfo = fmap RVSql . \case
   RS.UVPG annPGVal ->
     RS.txtConverter annPGVal
   RS.UVSessVar ty sessVar -> do

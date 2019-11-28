@@ -85,7 +85,7 @@ mkMultiplexedQuery baseQuery =
 -- the @result_vars@ input object, collecting variable values along the way.
 resolveMultiplexedValue
   :: (MonadState (GV.ReusableVariableValues, Seq (WithScalarType PGScalarValue)) m)
-  => GR.UnresolvedVal -> m S.SQLExp
+  => GR.UnresolvedVal -> m ResolvedVal
 resolveMultiplexedValue = \case
   GR.UVPG annPGVal -> do
     let GR.AnnPGVal varM _ colVal = annPGVal
@@ -97,10 +97,10 @@ resolveMultiplexedValue = \case
         syntheticVarIndex <- gets (length . snd)
         modifying _2 (|> colVal)
         pure ["synthetic", T.pack $ show syntheticVarIndex]
-    pure $ fromResVars (PGTypeScalar $ pstType colVal) varJsonPath
-  GR.UVSessVar ty sessVar -> pure $ fromResVars ty ["session", T.toLower sessVar]
-  GR.UVSQL sqlExp -> pure sqlExp
-  GR.UVSession -> pure $ fromResVars (PGTypeScalar PGJSON) ["session"]
+    pure $ RVPrep colVal $ fromResVars (PGTypeScalar $ pstType colVal) varJsonPath
+  GR.UVSessVar ty sessVar -> pure $ RVSql $ fromResVars ty ["session", T.toLower sessVar]
+  GR.UVSQL sqlExp -> pure $ RVSql $ sqlExp
+  GR.UVSession -> pure $ RVSql $ fromResVars (PGTypeScalar PGJSON) ["session"]
   where
     fromResVars ty jPath =
       flip S.SETyAnn (S.mkTypeAnn ty) $ S.SEOpApp (S.SQLOp "#>>")

@@ -21,6 +21,7 @@ import           Hasura.RQL.GBoolExp
 import           Hasura.RQL.Types
 import           Hasura.SQL.Rewrite          (prefixNumToAliases)
 import           Hasura.SQL.Types
+import           Hasura.SQL.Value
 
 import qualified Hasura.SQL.DML              as S
 
@@ -166,17 +167,18 @@ mkObjRelTableAls pfx relName =
 
 mkComputedFieldTableAls
   :: Iden
-  -> (ComputedFieldName, AnnSimpleSel)
-  -> SetofTableComputedFields S.SQLExp
+  -> (ComputedFieldName, AnnSimpleSelG ResolvedVal)
+  -> SetofTableComputedFields ResolvedVal
   -> Iden
 mkComputedFieldTableAls pfx (computedField, simpleSel) allComputedFields =
   pfx <> Iden ".cf." <> fieldIden
   where
     fieldIden = Iden $ T.intercalate "." $ map getFieldNameTxt $ sort similarFields
     similarFields = map fst $ flip filter allComputedFields $
-                    \(_, (cfName, sel)) -> cfName == computedField
-                                             && _asnFrom sel == _asnFrom simpleSel
-                                             && _asnArgs sel == _asnArgs simpleSel
+                    \(_, (cfName, sel)) ->
+                      cfName == computedField
+                      && equateSelectFrom (_asnFrom sel) (_asnFrom simpleSel)
+                      && equateTableArgs (_asnArgs sel) (_asnArgs simpleSel)
 
 mkBaseTableAls :: Iden -> Iden
 mkBaseTableAls pfx =
@@ -191,15 +193,16 @@ mkOrderByFieldName relName =
   FieldName $ relNameToTxt relName <> "." <> "order_by"
 
 fromTableRowArgs
-  :: Iden -> FunctionArgsExpTableRow S.SQLExp -> S.FunctionArgs
+  :: Iden -> FunctionArgsExpTableRow ResolvedVal -> S.FunctionArgs
 fromTableRowArgs pfx = toFunctionArgs . fmap toSQLExp
   where
     toFunctionArgs (FunctionArgsExp positional named) =
       S.FunctionArgs positional named
     toSQLExp AETableRow  = S.SERowIden $ mkBaseTableAls pfx
-    toSQLExp (AEInput s) = s
+    toSQLExp (AEInput s) = resolvedValToSQLExp s
 
-getAllSetofTableComputedFields :: Fields AnnFld -> SetofTableComputedFields S.SQLExp
+getAllSetofTableComputedFields
+  :: Fields AnnFld -> SetofTableComputedFields ResolvedVal
 getAllSetofTableComputedFields fields = flip mapMaybe fields $ \(field, annField) ->
   (field,) <$> liftM2 (,)
                  (annField ^? _FComputedField.acfgName)
@@ -251,7 +254,7 @@ buildJsonObject pfx parAls arrRelCtx strfyNum flds =
       toJSONableExp strfyNum (pgiType col) asText $ withColOp colOpM $
       S.mkQIdenExp (mkBaseTableAls pfx) $ pgiColumn col
 
-    fromScalarComputedField :: ComputedFieldScalarSel S.SQLExp -> S.SQLExp
+    fromScalarComputedField :: ComputedFieldScalarSel ResolvedVal -> S.SQLExp
     fromScalarComputedField computedFieldScalar =
       toJSONableExp strfyNum (PGColumnScalar ty) False $ withColOp colOpM $
       S.SEFunction $ S.FunctionExp fn (fromTableRowArgs pfx args) Nothing
@@ -356,7 +359,7 @@ processAnnOrderByCol pfx parAls arrRelCtx strfyNum = \case
         qualCol = S.mkQIdenExp relPfx nesAls
         relBaseNode =
           BaseNode relPfx Nothing (S.FISimple relTab Nothing)
-          (toSQLBoolExp (S.QualTable relTab) relFltr)
+          (toSQLBoolExp (S.QualTable relTab) $ fromAnnBoolExpResolved relFltr)
           Nothing Nothing Nothing
           (HM.singleton nesAls nesCol)
           (maybe HM.empty (uncurry HM.singleton) objNodeM)
@@ -457,7 +460,7 @@ mkArrNodeInfo pfx parAls (ArrRelCtx arrFlds obRels) = \case
     let (rn, tabArgs) = fetchRNAndTArgs annArrSel
         similarFlds = getSimilarAggFlds rn tabArgs $ delete aggFld
         similarFldNames = map fst similarFlds
-        similarOrdByFound = rn `elem` obRels && tabArgs == noTableArgs
+        similarOrdByFound = rn `elem` obRels && equateTableArgs tabArgs noTableArgs
         ordByFldName = mkOrderByFieldName rn
         extraOrdByFlds = bool [] [ordByFldName] similarOrdByFound
         sortedFlds = sort $ fld : (similarFldNames <> extraOrdByFlds)
@@ -476,7 +479,7 @@ mkArrNodeInfo pfx parAls (ArrRelCtx arrFlds obRels) = \case
     getSimilarAggFlds rn tabArgs f =
       flip filter (f arrFlds) $ \(_, annArrSel) ->
         let (lrn, lTabArgs) = fetchRNAndTArgs annArrSel
-        in (lrn == rn) && (lTabArgs == tabArgs)
+        in lrn == rn && equateTableArgs lTabArgs tabArgs
 
     subQueryRequired similarFlds hasSimOrdBy =
       hasSimOrdBy || any hasAgg similarFlds
@@ -626,7 +629,7 @@ mkBaseNode subQueryReq pfxs fldAls annSelFlds selectFrom
       in Just (S.Alias colAls, qualCol)
     mkColExp _ = Nothing
 
-    finalWhere = toSQLBoolExp tableQual $
+    finalWhere = toSQLBoolExp tableQual $ fromAnnBoolExpResolved $
                  maybe permFilter (andAnnBoolExps permFilter) whereM
     fromItem = selFromToFromItem baseTablepfx selectFrom
     tableQual = selFromToQual selectFrom
@@ -787,8 +790,8 @@ mkSQLSelect isSingleObject annSel =
     rootFldAls  = S.Alias $ toIden rootFldName
 
 mkFuncSelectWith
-  :: (AnnSelG a S.SQLExp -> S.Select)
-  -> AnnFnSelG (AnnSelG a S.SQLExp) S.SQLExp
+  :: (AnnSelG a ResolvedVal -> S.Select)
+  -> AnnFnSelG (AnnSelG a ResolvedVal) ResolvedVal
   -> S.SelectWith
 mkFuncSelectWith f annFn =
   S.SelectWith [(funcAls, S.CTESelect funcSel)] $
@@ -802,7 +805,7 @@ mkFuncSelectWith f annFn =
     funcSel = S.mkSelect { S.selFrom = Just $ S.FromExp [frmItem]
                          , S.selExtr = [S.Extractor S.SEStar Nothing]
                          }
-    frmItem = S.mkFuncFromItem qf $ mkSQLFunctionArgs fnArgs
+    frmItem = S.mkFuncFromItem qf $ mkSQLFunctionArgs $ resolvedValToSQLExp <$> fnArgs
 
     mkSQLFunctionArgs (FunctionArgsExp positional named) =
       S.FunctionArgs positional named
