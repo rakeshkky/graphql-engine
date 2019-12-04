@@ -8,6 +8,7 @@ import           Control.Concurrent.MVar
 import           Control.Exception                      (IOException, try)
 import           Control.Monad.Stateless
 import           Data.Aeson                             hiding (json)
+import           Data.Foldable                          (fold)
 import           Data.Int                               (Int64)
 import           Data.IORef
 import           Data.Time.Clock                        (UTCTime)
@@ -297,7 +298,7 @@ v1QueryHandler query = do
       instanceId <- scInstanceId . hcServerCtx <$> ask
       runQuery pgExecCtx instanceId userInfo schemaCache httpMgr sqlGenCtx (SystemDefined False) query
 
-v1Alpha1GQHandler :: (MonadIO m) => GH.GQLReqUnparsed -> Handler m (HttpResponse EncJSON)
+v1Alpha1GQHandler :: (MonadIO m) => GH.GraphQLQuery -> Handler m (HttpResponse EncJSON)
 v1Alpha1GQHandler query = do
   userInfo <- asks hcUser
   reqHeaders <- asks hcReqHeaders
@@ -312,11 +313,24 @@ v1Alpha1GQHandler query = do
   requestId <- asks hcRequestId
   let execCtx = E.ExecutionCtx logger sqlGenCtx pgExecCtx planCache
                 sc scVer manager enableAL
-  flip runReaderT execCtx $ GH.runGQ requestId userInfo reqHeaders query
+  case query of
+    GH.GQLSingle singleQuery -> flip runReaderT execCtx $ GH.runGQ requestId userInfo reqHeaders singleQuery
+    GH.GQLBatch queryList    -> do
+      let runSingleQuery q = runExceptT $ flip runReaderT execCtx $
+                             GH.runGQ requestId userInfo reqHeaders q
+          ioActions = map runSingleQuery queryList
+      resultsEither <- mapM liftIO ioActions
+      let (results, allHeadersM) = unzip $ flip map resultsEither $ \case
+            Left e ->
+              let includeInternal = userRole userInfo == adminRole
+              in (encJFromJValue $ GH.encodeGQErr includeInternal e, Nothing)
+            Right (HttpResponse res headers) -> (res, headers)
+
+      pure $ HttpResponse (encJFromList results) $ fold allHeadersM
 
 v1GQHandler
   :: (MonadIO m)
-  => GH.GQLReqUnparsed
+  => GH.GraphQLQuery
   -> Handler m (HttpResponse EncJSON)
 v1GQHandler = v1Alpha1GQHandler
 

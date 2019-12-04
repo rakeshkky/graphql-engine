@@ -2,6 +2,7 @@ module Hasura.GraphQL.Transport.HTTP.Protocol
   ( GQLReq(..)
   , GQLReqUnparsed
   , GQLReqParsed
+  , GraphQLQuery(..)
   , toParsed
   , GQLQueryText
   , GQLExecDoc(..)
@@ -71,6 +72,18 @@ newtype GQLQueryText
 
 type GQLReqUnparsed = GQLReq GQLQueryText
 type GQLReqParsed = GQLReq GQLExecDoc
+
+data GraphQLQuery
+  = GQLSingle !GQLReqUnparsed
+  | GQLBatch ![GQLReqUnparsed]
+  deriving (Show, Eq)
+
+instance J.FromJSON GraphQLQuery where
+  parseJSON v = (GQLBatch <$> J.parseJSON v) <|> (GQLSingle <$> J.parseJSON v)
+
+instance J.ToJSON GraphQLQuery where
+  toJSON (GQLSingle q) = J.toJSON q
+  toJSON (GQLBatch l)  = J.toJSON l
 
 toParsed :: (MonadError QErr m ) => GQLReqUnparsed -> m GQLReqParsed
 toParsed req = case G.parseExecutableDoc gqlText of
