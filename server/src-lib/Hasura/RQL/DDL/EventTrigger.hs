@@ -47,25 +47,26 @@ getDropFuncSql op trn = "DROP FUNCTION IF EXISTS"
                         <> " CASCADE"
 
 mkAllTriggersQ
-  :: (MonadTx m, HasSQLGenCtx m, TableCoreInfoRM m)
+  :: (MonadTx m, HasSQLGenCtx m)
   => TriggerName
   -> QualifiedTable
+  -> [PGColumnInfo]
   -> TriggerOpsDef
   -> m ()
-mkAllTriggersQ trn qt fullspec = do
-  onJust (tdInsert fullspec) (mkTriggerQ trn qt INSERT)
-  onJust (tdUpdate fullspec) (mkTriggerQ trn qt UPDATE)
-  onJust (tdDelete fullspec) (mkTriggerQ trn qt DELETE)
+mkAllTriggersQ trn qt allCols fullspec = do
+  onJust (tdInsert fullspec) (mkTriggerQ trn qt allCols INSERT)
+  onJust (tdUpdate fullspec) (mkTriggerQ trn qt allCols UPDATE)
+  onJust (tdDelete fullspec) (mkTriggerQ trn qt allCols DELETE)
 
 mkTriggerQ
-  :: (MonadTx m, HasSQLGenCtx m, TableCoreInfoRM m)
+  :: (MonadTx m, HasSQLGenCtx m)
   => TriggerName
   -> QualifiedTable
+  -> [PGColumnInfo]
   -> Ops
   -> SubscribeOpSpec
   -> m ()
-mkTriggerQ trn qt op (SubscribeOpSpec columns payload) = do
-  allCols <- getCols . _tciFieldInfoMap <$> askTableCoreInfo qt
+mkTriggerQ trn qt allCols op (SubscribeOpSpec columns payload) = do
   strfyNum <- stringifyNum <$> askSQLGenCtx
   liftTx $ Q.multiQE defaultTxErrorHandler $ Q.fromText . TL.toStrict $
     let payloadColumns = fromMaybe SubCStar payload

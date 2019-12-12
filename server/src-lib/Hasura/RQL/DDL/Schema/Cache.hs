@@ -163,7 +163,7 @@ buildSchemaCacheRule = proc inputs -> do
                    (tableCoreInfos, tableCoreInfo, HS.fromList tablePermissions)
                  bindA -< liftIO $ traceEventIO "STOP permissions"
                  bindA -< liftIO $ traceEventIO "START event triggers"
-                 eventTriggerInfos <- buildTableEventTriggers -< (tableCoreInfos, tableEventTriggers)
+                 eventTriggerInfos <- buildTableEventTriggers -< (tableCoreInfo, tableEventTriggers)
                  bindA -< liftIO $ traceEventIO "STOP event triggers"
                  returnA -< TableInfo
                    { _tiCoreInfo = tableCoreInfo
@@ -254,18 +254,19 @@ buildSchemaCacheRule = proc inputs -> do
 
     buildTableEventTriggers
       :: ( ArrowChoice arr, Inc.ArrowDistribute arr, ArrowWriter (Seq CollectedInfo) arr
-         , ArrowKleisli m arr, MonadIO m, MonadTx m, MonadReader BuildReason m, HasSQLGenCtx m )
-      => (TableCoreCache, [CatalogEventTrigger]) `arr` EventTriggerInfoMap
-    buildTableEventTriggers = proc (tableCache, eventTriggers) ->
+         , Inc.ArrowCache arr, ArrowKleisli m arr
+         , MonadIO m, MonadTx m, MonadReader BuildReason m, HasSQLGenCtx m )
+      => (TableCoreInfo, [CatalogEventTrigger]) `arr` EventTriggerInfoMap
+    buildTableEventTriggers = proc (tableInfo, eventTriggers) ->
       (\infos -> M.catMaybes infos >- returnA) <-<
         (| Inc.keyed (\_ duplicateEventTriggers -> do
              maybeEventTrigger <- noDuplicates mkEventTriggerMetadataObject -< duplicateEventTriggers
              (\info -> join info >- returnA) <-<
-               (| traverseA (\eventTrigger -> buildEventTrigger -< (tableCache, eventTrigger))
+               (| traverseA (\eventTrigger -> buildEventTrigger -< (tableInfo, eventTrigger))
                |) maybeEventTrigger)
         |) (M.groupOn _cetName eventTriggers)
       where
-        buildEventTrigger = proc (tableCache, eventTrigger) -> do
+        buildEventTrigger = proc (tableInfo, eventTrigger) -> do
           let CatalogEventTrigger qt trn configuration = eventTrigger
               metadataObject = mkEventTriggerMetadataObject eventTrigger
               schemaObjectId = SOTableObj qt $ TOTrigger trn
@@ -274,14 +275,18 @@ buildSchemaCacheRule = proc inputs -> do
              (| modifyErrA (do
                   etc <- bindErrorA -< decodeValue configuration
                   (info, dependencies) <- bindErrorA -< subTableP2Setup qt etc
-                  bindErrorA -< flip runTableCoreCacheRT tableCache $ do
-                    buildReason <- ask
-                    when (buildReason == CatalogUpdate) $
-                      mkAllTriggersQ trn qt (etcDefinition etc)
+                  let tableColumns = M.mapMaybe (^? _FIColumn) (_tciFieldInfoMap tableInfo)
+                  recreateViewIfNeeded -< (qt, tableColumns, trn, etcDefinition etc)
                   recordDependencies -< (metadataObject, schemaObjectId, dependencies)
                   returnA -< info)
              |) (addTableContext qt . addTriggerContext))
            |) metadataObject
+
+        recreateViewIfNeeded = Inc.cache $
+          arrM \(tableName, tableColumns, triggerName, triggerDefinition) -> do
+            buildReason <- ask
+            when (buildReason == CatalogUpdate) $
+              mkAllTriggersQ triggerName tableName (M.elems tableColumns) triggerDefinition
 
     addRemoteSchema
       :: ( ArrowChoice arr, ArrowWriter (Seq CollectedInfo) arr, ArrowKleisli m arr
