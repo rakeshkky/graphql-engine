@@ -339,7 +339,7 @@ getEnv :: (QErrM m, MonadIO m) => T.Text -> m T.Text
 getEnv env = do
   mEnv <- liftIO $ lookupEnv (T.unpack env)
   case mEnv of
-    Nothing -> throw400 NotFound $ "environment variable '" <> env <> "' not set"
+    Nothing     -> throw400 NotFound $ "environment variable '" <> env <> "' not set"
     Just envVal -> return (T.pack envVal)
 
 getEventTriggerDef
