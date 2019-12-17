@@ -46,24 +46,6 @@ convColSpec :: FieldInfoMap FieldInfo -> PermColSpec -> [PGCol]
 convColSpec _ (PCCols cols) = cols
 convColSpec cim PCStar      = map pgiColumn $ getCols cim
 
--- FIXME: move check into collecting code for addPermP1 (probably buildSchemaCache)
-assertPermNotDefined
-  :: (MonadError QErr m)
-  => RoleName
-  -> PermAccessor a
-  -> TableInfo
-  -> m ()
-assertPermNotDefined roleName pa tableInfo =
-  when (permissionIsDefined rpi pa || roleName == adminRole)
-  $ throw400 AlreadyExists $ mconcat
-  [ "'" <> T.pack (show $ permAccToType pa) <> "'"
-  , " permission on " <>> _tciName (_tiCoreInfo tableInfo)
-  , " for role " <>> roleName
-  , " already exists"
-  ]
-  where
-    rpi = M.lookup roleName $ _tiRolePermInfoMap tableInfo
-
 permissionIsDefined
   :: Maybe RolePermInfo -> PermAccessor a -> Bool
 permissionIsDefined rpi pa =
@@ -311,7 +293,6 @@ runCreatePerm
   :: (UserInfoM m, CacheRWM m, IsPerm a, MonadTx m, HasSystemDefined m)
   => CreatePerm a -> m EncJSON
 runCreatePerm (WithTable tn pd) = do
-  adminOnly
   addPermP2 tn pd
   let pt = permAccToType $ getPermAcc1 pd
   buildSchemaCacheFor $ MOTableObj tn (MTOPerm (pdRole pd) pt)
