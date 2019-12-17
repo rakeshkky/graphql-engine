@@ -182,14 +182,6 @@ instance MonadTx (Q.TxE QErr) where
 instance MonadIO (LazyTx e) where
   liftIO = LTTx . liftIO
 
--- FIXME: move orphans into pg-client package
-instance MonadBase IO (Q.TxE e) where
-  liftBase = liftIO
-instance MonadBaseControl IO (Q.TxE e) where
-  type StM (Q.TxE e) a = StM (ReaderT Q.PGConn (ExceptT e IO)) a
-  liftBaseWith f = Q.TxE $ liftBaseWith \run -> f (run . Q.txHandler)
-  restoreM = Q.TxE . restoreM
-
 instance MonadBase IO (LazyTx e) where
   liftBase = liftIO
 
