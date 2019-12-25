@@ -7,6 +7,7 @@ module Hasura.RQL.Types.Action
   , ActionDefinition(..)
   , getActionKind
   , CreateAction(..)
+  , UpdateAction(..)
   , ActionDefinitionInput
 
   , ResolvedWebhook(..)
@@ -118,7 +119,7 @@ type ActionPermissionMap
 data ActionInfo
   = ActionInfo
   { _aiName        :: !ActionName
-  , _aiDefinition   :: !ResolvedActionDefinition
+  , _aiDefinition  :: !ResolvedActionDefinition
   , _aiPermissions :: !ActionPermissionMap
   } deriving (Show, Eq)
 $(J.deriveToJSON (J.aesonDrop 3 J.snakeCase) ''ActionInfo)
@@ -133,6 +134,13 @@ data CreateAction
   , _caComment    :: !(Maybe Text)
   } deriving (Show, Eq, Lift)
 $(J.deriveJSON (J.aesonDrop 3 J.snakeCase) ''CreateAction)
+
+data UpdateAction
+  = UpdateAction
+  { _uaName       :: !ActionName
+  , _uaDefinition :: !ActionDefinitionInput
+  } deriving (Show, Eq, Lift)
+$(J.deriveJSON (J.aesonDrop 3 J.snakeCase) ''UpdateAction)
 
 newtype ActionPermissionSelect
   = ActionPermissionSelect
