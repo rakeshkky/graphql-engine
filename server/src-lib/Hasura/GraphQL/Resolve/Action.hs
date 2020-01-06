@@ -12,40 +12,42 @@ module Hasura.GraphQL.Resolve.Action
 
 import           Hasura.Prelude
 
-import           Control.Concurrent                (threadDelay)
-import           Control.Exception                 (try)
+import           Control.Concurrent                 (threadDelay)
+import           Control.Exception                  (try)
 import           Control.Lens
 import           Data.Has
 import           Data.IORef
 
-import qualified Control.Concurrent.Async          as A
-import qualified Data.Aeson                        as J
-import qualified Data.Aeson.Casing                 as J
-import qualified Data.Aeson.TH                     as J
-import qualified Data.HashMap.Strict               as Map
-import qualified Data.Text                         as T
-import qualified Data.UUID                         as UUID
-import qualified Database.PG.Query                 as Q
-import qualified Language.GraphQL.Draft.Syntax     as G
-import qualified Network.HTTP.Client               as HTTP
-import qualified Network.Wreq                      as Wreq
+import qualified Control.Concurrent.Async           as A
+import qualified Data.Aeson                         as J
+import qualified Data.Aeson.Casing                  as J
+import qualified Data.Aeson.TH                      as J
+import qualified Data.HashMap.Strict                as Map
+import qualified Data.Text                          as T
+import qualified Data.UUID                          as UUID
+import qualified Database.PG.Query                  as Q
+import qualified Language.GraphQL.Draft.Syntax      as G
+import qualified Network.HTTP.Client                as HTTP
+import qualified Network.Wreq                       as Wreq
 
-import qualified Hasura.GraphQL.Resolve.Select     as GRS
-import qualified Hasura.RQL.DML.Select             as RS
-import qualified Hasura.SQL.DML                    as S
+import qualified Hasura.GraphQL.Resolve.Select      as GRS
+import qualified Hasura.RQL.DML.Select              as RS
+import qualified Hasura.SQL.DML                     as S
 
 import           Hasura.EncJSON
 import           Hasura.GraphQL.Resolve.Context
 import           Hasura.GraphQL.Resolve.InputValue
-import           Hasura.GraphQL.Resolve.Select     (processTableSelectionSet)
+import           Hasura.GraphQL.Resolve.Select      (processTableSelectionSet)
 import           Hasura.GraphQL.Validate.Field
 import           Hasura.GraphQL.Validate.Types
 import           Hasura.HTTP
-import           Hasura.RQL.DML.Select             (asSingleRowJsonResp)
+import           Hasura.RQL.DDL.Schema.Cache.Common
+import           Hasura.RQL.DML.Select              (asSingleRowJsonResp)
 import           Hasura.RQL.Types
+import           Hasura.RQL.Types.Run
 import           Hasura.SQL.Types
-import           Hasura.SQL.Value                  (PGScalarValue (..), pgScalarValueToJson,
-                                                    toTxtValue)
+import           Hasura.SQL.Value                   (PGScalarValue (..), pgScalarValueToJson,
+                                                     toTxtValue)
 
 data InputFieldResolved
   = InputFieldSimple !Text
@@ -325,13 +327,13 @@ data ActionLogItem
   } deriving (Show, Eq)
 
 asyncActionsProcessor
-  :: IORef (SchemaCache, SchemaCacheVer)
+  :: IORef (RebuildableSchemaCache Run, SchemaCacheVer)
   -> Q.PGPool
   -> HTTP.Manager
   -> IO ()
 asyncActionsProcessor cacheRef pgPool httpManager = forever $ do
   asyncInvocations <- getUndeliveredEvents
-  actionCache <- scActions . fst <$> readIORef cacheRef
+  actionCache <- scActions . lastBuiltSchemaCache . fst <$> readIORef cacheRef
   A.mapConcurrently_ (callHandler actionCache) asyncInvocations
   threadDelay (1 * 1000 * 1000)
   where
@@ -533,7 +535,7 @@ resolveAsyncResponse selectContext field = do
               RS.AEInput $ UVSQL $ S.mkQIdenExp (Iden "_0_root.base") (Iden "response_payload")
         outputSelect <- processOutputSelectionSet relationshipFromExp (_fType fld)
                         (_fSelSet fld)
-        return $ RS.FObj $ RS.AnnRelG outputRelName [] outputSelect
+        return $ RS.FObj $ RS.AnnRelG outputRelName mempty outputSelect
       -- the metadata columns
       "id"         -> return $ mkAnnFldFromPGCol "id" PGUUID
       "created_at" -> return $ mkAnnFldFromPGCol "created_at" PGTimeStampTZ

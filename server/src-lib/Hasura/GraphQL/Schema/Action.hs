@@ -5,6 +5,7 @@ module Hasura.GraphQL.Schema.Action
 import qualified Data.HashMap.Strict           as Map
 import qualified Language.GraphQL.Draft.Syntax as G
 
+import           Control.Lens                  ((^.))
 import           Data.Coerce                   (coerce)
 
 import           Hasura.GraphQL.Schema.Builder
@@ -191,9 +192,9 @@ mkActionFieldsAndTypes actionInfo annotatedOutputType permission =
           flip map (Map.toList $ _aotRelationships annotatedOutputType) $
           \(relationshipName, relationship) ->
             let remoteTableInfo = _orRemoteTable relationship
-                remoteTable = _tiName remoteTableInfo
+                remoteTable = remoteTableInfo ^. tiCoreInfo.tciName
                 filterAndLimitM = getFilterAndLimit remoteTableInfo
-                columnMapping =
+                columnMapping = Map.fromList
                   [ (unsafePGCol $ coerce k, pgiColumn v)
                   | (k, v) <- Map.toList $ _orFieldMapping relationship
                   ]

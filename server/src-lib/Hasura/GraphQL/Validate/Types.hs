@@ -2,6 +2,8 @@ module Hasura.GraphQL.Validate.Types
   ( InpValInfo(..)
   , ParamMap
 
+  , mapFromL
+
   , ObjFldInfo(..)
   , mkHsraObjFldInfo
   , ObjFieldMap

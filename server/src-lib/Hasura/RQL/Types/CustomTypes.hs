@@ -46,6 +46,7 @@ import qualified Language.GraphQL.Draft.Syntax       as G
 
 import qualified Hasura.GraphQL.Validate.Types       as VT
 
+import           Hasura.Incremental                  (Cacheable)
 import           Hasura.Prelude
 import           Hasura.RQL.Instances                ()
 import           Hasura.RQL.Types.Column
@@ -54,7 +55,7 @@ import           Hasura.SQL.Types
 
 newtype GraphQLType
   = GraphQLType { unGraphQLType :: G.GType }
-  deriving (Show, Eq, Lift, Generic)
+  deriving (Show, Eq, Lift, Generic, NFData, Cacheable)
 
 instance J.ToJSON GraphQLType where
   toJSON = J.toJSON . GPrintText.render GPrint.graphQLType . unGraphQLType
@@ -68,7 +69,7 @@ instance J.FromJSON GraphQLType where
 
 newtype InputObjectFieldName
   = InputObjectFieldName { unInputObjectFieldName :: G.Name }
-  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic)
+  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic, NFData, Cacheable)
 
 data InputObjectFieldDefinition
   = InputObjectFieldDefinition
@@ -77,11 +78,13 @@ data InputObjectFieldDefinition
   , _iofdType        :: !GraphQLType
   -- TODO: default
   } deriving (Show, Eq, Lift, Generic)
+instance NFData InputObjectFieldDefinition
+instance Cacheable InputObjectFieldDefinition
 $(J.deriveJSON (J.aesonDrop 5 J.snakeCase) ''InputObjectFieldDefinition)
 
 newtype InputObjectTypeName
   = InputObjectTypeName { unInputObjectTypeName :: G.NamedType }
-  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic)
+  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic, NFData, Cacheable)
 
 data InputObjectTypeDefinition
   = InputObjectTypeDefinition
@@ -89,12 +92,14 @@ data InputObjectTypeDefinition
   , _iotdDescription :: !(Maybe G.Description)
   , _iotdFields      :: !(NEList.NonEmpty InputObjectFieldDefinition)
   } deriving (Show, Eq, Lift, Generic)
+instance NFData InputObjectTypeDefinition
+instance Cacheable InputObjectTypeDefinition
 $(J.deriveJSON (J.aesonDrop 5 J.snakeCase) ''InputObjectTypeDefinition)
 
 newtype ObjectFieldName
   = ObjectFieldName { unObjectFieldName :: G.Name }
   deriving ( Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON
-           , J.FromJSONKey, J.ToJSONKey, Lift, Generic)
+           , J.FromJSONKey, J.ToJSONKey, Lift, Generic, NFData, Cacheable)
 
 data ObjectFieldDefinition
   = ObjectFieldDefinition
@@ -107,11 +112,13 @@ data ObjectFieldDefinition
   , _ofdDescription :: !(Maybe G.Description)
   , _ofdType        :: !GraphQLType
   } deriving (Show, Eq, Lift, Generic)
+instance NFData ObjectFieldDefinition
+instance Cacheable ObjectFieldDefinition
 $(J.deriveJSON (J.aesonDrop 4 J.snakeCase) ''ObjectFieldDefinition)
 
 newtype ObjectRelationshipName
   = ObjectRelationshipName { unObjectRelationshipName :: G.Name }
-  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic)
+  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic, NFData, Cacheable)
 
 data ObjectRelationship t f
   = ObjectRelationship
@@ -119,6 +126,8 @@ data ObjectRelationship t f
   , _orRemoteTable  :: !t
   , _orFieldMapping :: !(Map.HashMap ObjectFieldName f)
   } deriving (Show, Eq, Lift, Generic)
+instance (NFData t, NFData f) => NFData (ObjectRelationship t f)
+instance (Eq t, Cacheable t, Eq f, Cacheable f) => Cacheable (ObjectRelationship t f)
 $(makeLenses ''ObjectRelationship)
 
 type ObjectRelationshipDefinition =
@@ -129,7 +138,7 @@ $(J.deriveJSON (J.aesonDrop 3 J.snakeCase) ''ObjectRelationship)
 newtype ObjectTypeName
   = ObjectTypeName { unObjectTypeName :: G.NamedType }
   deriving ( Show, Eq, Ord, Hashable, J.FromJSON, J.FromJSONKey
-           , J.ToJSONKey, J.ToJSON, Lift, Generic)
+           , J.ToJSONKey, J.ToJSON, Lift, Generic, NFData, Cacheable)
 
 data ObjectTypeDefinition
   = ObjectTypeDefinition
@@ -138,6 +147,8 @@ data ObjectTypeDefinition
   , _otdFields        :: !(NEList.NonEmpty ObjectFieldDefinition)
   , _otdRelationships :: !(Maybe [ObjectRelationshipDefinition])
   } deriving (Show, Eq, Lift, Generic)
+instance NFData ObjectTypeDefinition
+instance Cacheable ObjectTypeDefinition
 $(J.deriveJSON (J.aesonDrop 4 J.snakeCase) ''ObjectTypeDefinition)
 
 data ScalarTypeDefinition
@@ -145,11 +156,13 @@ data ScalarTypeDefinition
   { _stdName        :: !G.NamedType
   , _stdDescription :: !(Maybe G.Description)
   } deriving (Show, Eq, Lift, Generic)
+instance NFData ScalarTypeDefinition
+instance Cacheable ScalarTypeDefinition
 $(J.deriveJSON (J.aesonDrop 4 J.snakeCase) ''ScalarTypeDefinition)
 
 newtype EnumTypeName
   = EnumTypeName { unEnumTypeName :: G.NamedType }
-  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic)
+  deriving (Show, Eq, Ord, Hashable, J.FromJSON, J.ToJSON, Lift, Generic, NFData, Cacheable)
 
 data EnumValueDefinition
   = EnumValueDefinition
@@ -157,6 +170,8 @@ data EnumValueDefinition
   , _evdDescription  :: !(Maybe G.Description)
   , _evdIsDeprecated :: !(Maybe Bool)
   } deriving (Show, Eq, Lift, Generic)
+instance NFData EnumValueDefinition
+instance Cacheable EnumValueDefinition
 $(J.deriveJSON (J.aesonDrop 4 J.snakeCase) ''EnumValueDefinition)
 
 data EnumTypeDefinition
@@ -165,6 +180,8 @@ data EnumTypeDefinition
   , _etdDescription :: !(Maybe G.Description)
   , _etdValues      :: !(NEList.NonEmpty EnumValueDefinition)
   } deriving (Show, Eq, Lift, Generic)
+instance NFData EnumTypeDefinition
+instance Cacheable EnumTypeDefinition
 $(J.deriveJSON (J.aesonDrop 4 J.snakeCase) ''EnumTypeDefinition)
 
 data CustomTypeDefinition
@@ -187,13 +204,14 @@ data CustomTypes
   , _ctScalars      :: !(Maybe [ScalarTypeDefinition])
   , _ctEnums        :: !(Maybe [EnumTypeDefinition])
   } deriving (Show, Eq, Lift, Generic)
+instance NFData CustomTypes
+instance Cacheable CustomTypes
 $(J.deriveJSON (J.aesonDrop 3 J.snakeCase) ''CustomTypes)
 
 emptyCustomTypes :: CustomTypes
 emptyCustomTypes = CustomTypes Nothing Nothing Nothing Nothing
 
-type AnnotatedRelationship =
-  ObjectRelationship (TableInfo PGColumnInfo) PGColumnInfo
+type AnnotatedRelationship = ObjectRelationship TableInfo PGColumnInfo
 
 data OutputFieldTypeInfo
   = OutputFieldScalar !VT.ScalarTyInfo

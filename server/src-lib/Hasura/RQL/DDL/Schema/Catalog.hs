@@ -7,24 +7,47 @@ module Hasura.RQL.DDL.Schema.Catalog
   , updateTableConfig
   , deleteTableFromCatalog
   , getTableConfig
+  , purgeDependentObject
   ) where
 
 import           Hasura.Prelude
 
-import qualified Database.PG.Query            as Q
+import qualified Data.Text                          as T
+import qualified Database.PG.Query                  as Q
 
 import           Data.Aeson
 
 import           Hasura.Db
+import           Hasura.RQL.DDL.ComputedField
+import           Hasura.RQL.DDL.EventTrigger
+import           Hasura.RQL.DDL.Permission.Internal
+import           Hasura.RQL.DDL.Relationship
+import           Hasura.RQL.DDL.Schema.Function
 import           Hasura.RQL.Types.Catalog
 import           Hasura.RQL.Types.Common
+import           Hasura.RQL.Types.Error
 import           Hasura.RQL.Types.SchemaCache
 import           Hasura.SQL.Types
 
+import           Debug.Trace
+
 fetchCatalogData :: (MonadTx m) => m CatalogMetadata
-fetchCatalogData =
-  liftTx $ Q.getAltJ . runIdentity . Q.getRow <$> Q.withQE defaultTxErrorHandler
-  $(Q.sqlFromFile "src-rsr/catalog_metadata.sql") () True
+-- <<<<<<< HEAD
+-- fetchCatalogData =
+--   liftTx $ Q.getAltJ . runIdentity . Q.getRow <$> Q.withQE defaultTxErrorHandler
+--   $(Q.sqlFromFile "src-rsr/catalog_metadata.sql") () True
+-- =======
+fetchCatalogData = do
+  liftTx . liftIO $ traceEventIO "START fetch"
+  liftTx . liftIO $ traceEventIO "START fetch/query"
+  metadataBytes <- (liftTx $ runIdentity . Q.getRow <$> Q.withQE defaultTxErrorHandler $(Q.sqlFromFile "src-rsr/catalog_metadata.sql") () True)
+  liftTx . liftIO $ traceEventIO "STOP fetch/query"
+  liftTx . liftIO $ traceEventIO "START fetch/decode"
+  let !decodedValue = force (eitherDecodeStrict' metadataBytes)
+  liftTx . liftIO $ traceEventIO "STOP fetch/decode"
+  liftTx . liftIO $ traceEventIO "STOP fetch"
+  decodedValue `onLeft` \err -> throw500 (T.pack err)
+-- >>>>>>> 3354-faster-metadata-migrations
 
 saveTableToCatalog :: (MonadTx m) => QualifiedTable -> SystemDefined -> Bool -> TableConfig -> m ()
 saveTableToCatalog (QualifiedObject sn tn) systemDefined isEnum config = liftTx $
@@ -66,3 +89,12 @@ getTableConfig (QualifiedObject sn tn) = liftTx $
        SELECT configuration::json FROM hdb_catalog.hdb_table
         WHERE table_schema = $1 AND table_name = $2
     |] (sn, tn) True
+
+purgeDependentObject :: (MonadTx m) => SchemaObjId -> m ()
+purgeDependentObject = \case
+  SOTableObj tn (TOPerm rn pt) -> liftTx $ dropPermFromCatalog tn rn pt
+  SOTableObj qt (TORel rn) -> liftTx $ delRelFromCatalog qt rn
+  SOFunction qf -> liftTx $ delFunctionFromCatalog qf
+  SOTableObj _ (TOTrigger trn) -> liftTx $ delEventTriggerFromCatalog trn
+  SOTableObj qt (TOComputedField ccn) -> dropComputedFieldFromCatalog qt ccn
+  schemaObjId -> throw500 $ "unexpected dependent object: " <> reportSchemaObj schemaObjId

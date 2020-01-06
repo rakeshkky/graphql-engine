@@ -1,8 +1,10 @@
 module Hasura.RQL.DDL.Action
   ( CreateAction
-  , validateAndCacheAction
+  -- , validateAndCacheAction
   , runCreateAction
   , runCreateAction_
+  , resolveAction
+  , buildActionFilter
 
   , UpdateAction
   , runUpdateAction
@@ -14,7 +16,7 @@ module Hasura.RQL.DDL.Action
   , fetchActions
 
   , CreateActionPermission
-  , validateAndCacheActionPermission
+  -- , validateAndCacheActionPermission
   , runCreateActionPermission
   , runCreateActionPermission_
 
@@ -74,16 +76,17 @@ runCreateAction
      )
   => CreateAction -> m EncJSON
 runCreateAction q = do
-  adminOnly
+  -- adminOnly
   runCreateAction_ q
   return successMsg
 
 runCreateAction_
-  :: (QErrM m , CacheRWM m, MonadTx m, MonadIO m)
+  :: (QErrM m , CacheRWM m, MonadTx m)
   => CreateAction -> m ()
 runCreateAction_ q@(CreateAction actionName actionDefinition comment) = do
-  validateAndCacheAction q
+  -- validateAndCacheAction q
   persistCreateAction
+  buildSchemaCacheFor $ MOAction actionName
   where
     persistCreateAction :: (MonadTx m) => m ()
     persistCreateAction = do
@@ -93,24 +96,28 @@ runCreateAction_ q@(CreateAction actionName actionDefinition comment) = do
           VALUES ($1, $2, $3)
       |] (actionName, Q.AltJ actionDefinition, comment) True
 
-validateAndCacheAction
-  :: (QErrM m, CacheRWM m, MonadIO m)
-  => CreateAction -> m ()
-validateAndCacheAction q = do
-  actionMap <- scActions <$> askSchemaCache
-  onJust (Map.lookup actionName actionMap) $
-    const $ throw400 AlreadyExists $
-    "action with name " <> actionName <<> " already exists"
-  actionInfo <- buildActionInfo actionName actionDefinition
-  addActionToCache actionInfo
-  where
-    actionName  = _caName q
-    actionDefinition = _caDefinition q
+-- validateAndCacheAction
+--   :: (QErrM m, CacheRWM m, MonadIO m)
+--   => CreateAction -> m ()
+-- validateAndCacheAction q = do
+--   actionMap <- scActions <$> askSchemaCache
+--   onJust (Map.lookup actionName actionMap) $
+--     const $ throw400 AlreadyExists $
+--     "action with name " <> actionName <<> " already exists"
+--   actionInfo <- resolveAction undefined actionName actionDefinition
+--   -- addActionToCache actionInfo
+--   undefined
+--   where
+--     actionName  = _caName q
+--     actionDefinition = _caDefinition q
 
-buildActionInfo
-  :: (QErrM m, CacheRM m, MonadIO m)
-  => ActionName -> ActionDefinitionInput -> m ActionInfo
-buildActionInfo actionName actionDefinition = do
+resolveAction
+  :: (QErrM m, MonadIO m)
+  => (NonObjectTypeMap, AnnotatedObjects)
+  -> ActionName
+  -> ActionDefinitionInput
+  -> m ResolvedActionDefinition
+resolveAction customTypes actionName actionDefinition = do
   let responseType = unGraphQLType $ _adOutputType actionDefinition
       responseBaseType = G.getBaseType responseType
   forM (_adArguments actionDefinition) $ \argument -> do
@@ -136,12 +143,11 @@ buildActionInfo actionName actionDefinition = do
   --   _ -> throw400 InvalidParams $ "the output type: " <>
   --        showNamedTy responseBaseType <>
   --        " should be a scalar/enum/object"
-  resolvedDefinition <- traverse resolveWebhook actionDefinition
-  return $ ActionInfo actionName resolvedDefinition mempty
+  traverse resolveWebhook actionDefinition
   where
     getNonObjectTypeInfo typeName = do
-      nonObjectTypeMap <- (unNonObjectTypeMap . fst . scCustomTypes) <$> askSchemaCache
-      let inputTypeInfos = nonObjectTypeMap <> VT.mapFromL VT.getNamedTy defaultTypes
+      let nonObjectTypeMap = unNonObjectTypeMap $ fst $ customTypes
+          inputTypeInfos = nonObjectTypeMap <> VT.mapFromL VT.getNamedTy defaultTypes
       onNothing (Map.lookup typeName inputTypeInfos) $
         throw400 NotExists $ "the type: " <> showNamedTy typeName <>
         " is not defined in custom types"
@@ -152,9 +158,8 @@ buildActionInfo actionName actionDefinition = do
         eitherRenderedTemplate <- renderURLTemplate template
         either (throw400 Unexpected . T.pack) (pure . ResolvedWebhook) eitherRenderedTemplate
 
-    getObjectTypeInfo typeName = do
-      customTypes <- (snd . scCustomTypes) <$> askSchemaCache
-      onNothing (Map.lookup (ObjectTypeName typeName) customTypes) $
+    getObjectTypeInfo typeName =
+      onNothing (Map.lookup (ObjectTypeName typeName) (snd customTypes)) $
         throw400 NotExists $ "the type: "
         <> showNamedTy typeName <>
         " is not an object type defined in custom types"
@@ -164,25 +169,23 @@ buildActionInfo actionName actionDefinition = do
       G.TypeNamed _ _ -> False
 
 runUpdateAction
-  :: forall m. ( QErrM m, UserInfoM m
-               , CacheRWM m, MonadTx m
-               , MonadIO m
-               )
+  :: forall m. ( QErrM m , CacheRWM m, MonadTx m)
   => UpdateAction -> m EncJSON
 runUpdateAction (UpdateAction actionName actionDefinition) = do
-  adminOnly
+  -- adminOnly
   sc <- askSchemaCache
   let actionsMap = scActions sc
-  actionPerms <- fmap _aiPermissions $ onNothing (Map.lookup actionName actionsMap) $
+  void $ onNothing (Map.lookup actionName actionsMap) $
                  throw400 NotExists $ "action with name " <> actionName <<> " not exists"
-  newActionInfo <- buildActionInfo actionName actionDefinition
+  -- newActionInfo <- resolveAction undefined actionName actionDefinition
   -- FIXME:- This is not ideal implementation of updating ActionInfo.
   -- With incremental schema build PR (https://github.com/hasura/graphql-engine/pull/3394) going in
   -- the logic here would be just updating the catalog with definition and incrementally
   -- building schema cache for action
-  let newActionInfoPerms = newActionInfo{_aiPermissions = actionPerms}
-  writeSchemaCache sc{scActions = Map.insert actionName newActionInfoPerms actionsMap}
+  -- let newActionInfoPerms = newActionInfo{_aiPermissions = actionPerms}
+  -- writeSchemaCache sc{scActions = Map.insert actionName newActionInfoPerms actionsMap}
   updateActionInCatalog
+  buildSchemaCacheFor $ MOAction actionName
   pure successMsg
   where
     updateActionInCatalog :: m ()
@@ -214,12 +217,13 @@ runDropAction
   :: (QErrM m, UserInfoM m, CacheRWM m, MonadTx m)
   => DropAction -> m EncJSON
 runDropAction (DropAction actionName clearDataM)= do
-  adminOnly
+  -- adminOnly
   void $ getActionInfo actionName
-  delActionFromCache actionName
+  -- delActionFromCache actionName
   liftTx $ do
     deleteActionPermissionsFromCatalog
     deleteActionFromCatalog actionName clearDataM
+  buildSchemaCacheStrict
   return successMsg
   where
     deleteActionPermissionsFromCatalog =
@@ -266,36 +270,37 @@ newtype ActionMetadataField
   = ActionMetadataField { unActionMetadataField :: Text }
   deriving (Show, Eq, J.FromJSON, J.ToJSON)
 
+-- validateAndCacheActionPermission
+--   :: (QErrM m, CacheRWM m, MonadTx m)
+--   => CreateActionPermission -> m ()
+-- validateAndCacheActionPermission createActionPermission = do
+--   actionInfo <- getActionInfo actionName
+--   onJust (Map.lookup role $ _aiPermissions actionInfo) $ \_ ->
+--     throw400 AlreadyExists $
+--     "permission for role: " <> role <<> " is already defined on " <>> actionName
+--   actionFilter <- buildActionFilter (_apdSelect permissionDefinition)
+--   -- addActionPermissionToCache actionName $ ActionPermissionInfo role actionFilter
+--   undefined
+--   where
+--     actionName = _capAction createActionPermission
+--     role = _capRole createActionPermission
+--     permissionDefinition = _capDefinition createActionPermission
 
-validateAndCacheActionPermission
-  :: (QErrM m, CacheRWM m, MonadTx m)
-  => CreateActionPermission -> m ()
-validateAndCacheActionPermission createActionPermission = do
-  actionInfo <- getActionInfo actionName
-  onJust (Map.lookup role $ _aiPermissions actionInfo) $ \_ ->
-    throw400 AlreadyExists $
-    "permission for role: " <> role <<> " is already defined on " <>> actionName
-  actionFilter <- buildActionFilter (_apdSelect permissionDefinition)
-  addActionPermissionToCache actionName $
-    ActionPermissionInfo role actionFilter
-  where
-    actionName = _capAction createActionPermission
-    role = _capRole createActionPermission
-    permissionDefinition = _capDefinition createActionPermission
-    -- TODO
-    buildActionFilter
-      :: (QErrM m)
-      => ActionPermissionSelect
-      -> m AnnBoolExpPartialSQL
-    buildActionFilter permission =
-      return annBoolExpTrue
+-- TODO
+buildActionFilter
+  :: (QErrM m)
+  => ActionPermissionSelect
+  -> m AnnBoolExpPartialSQL
+buildActionFilter permission =
+  return annBoolExpTrue
 
 runCreateActionPermission_
   :: ( QErrM m , CacheRWM m, MonadTx m)
   => CreateActionPermission -> m ()
 runCreateActionPermission_ createActionPermission = do
-  validateAndCacheActionPermission createActionPermission
+  -- validateAndCacheActionPermission createActionPermission
   persistCreateActionPermission
+  buildSchemaCacheFor $ MOActionPermission actionName role
   where
     actionName = _capAction createActionPermission
     role = _capRole createActionPermission
@@ -316,7 +321,7 @@ runCreateActionPermission
      )
   => CreateActionPermission -> m EncJSON
 runCreateActionPermission createActionPermission = do
-  adminOnly
+  -- adminOnly
   runCreateActionPermission_ createActionPermission
   return successMsg
 
@@ -334,12 +339,12 @@ runDropActionPermission
      )
   => DropActionPermission -> m EncJSON
 runDropActionPermission dropActionPermission = do
-  adminOnly
+  -- adminOnly
   actionInfo <- getActionInfo actionName
   void $ onNothing (Map.lookup role $ _aiPermissions actionInfo) $
     throw400 NotExists $
     "permission for role: " <> role <<> " is not defined on " <>> actionName
-  delActionPermissionFromCache actionName role
+  -- delActionPermissionFromCache actionName role
   liftTx $ deleteActionPermissionFromCatalog actionName role
   return successMsg
   where

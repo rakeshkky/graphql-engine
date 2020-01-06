@@ -33,6 +33,7 @@ import           Hasura.RQL.DML.Insert
 import           Hasura.RQL.DML.Select
 import           Hasura.RQL.DML.Update
 import           Hasura.RQL.Types
+import           Hasura.RQL.Types.Run
 import           Hasura.Server.Init                 (InstanceId (..))
 import           Hasura.Server.Utils
 
@@ -157,34 +158,6 @@ $(deriveJSON
   ''RQLQueryV2
  )
 
-data RunCtx
-  = RunCtx
-  { _rcUserInfo  :: !UserInfo
-  , _rcHttpMgr   :: !HTTP.Manager
-  , _rcSqlGenCtx :: !SQLGenCtx
-  }
-
-newtype Run a
-  = Run {unRun :: StateT SchemaCache (ReaderT RunCtx (LazyTx QErr)) a}
-  deriving ( Functor, Applicative, Monad
-           , MonadError QErr
-           , MonadState SchemaCache
-           , MonadReader RunCtx
-           , CacheRM
-           , CacheRWM
-           , MonadTx
-           , MonadIO
-           )
-
-instance UserInfoM Run where
-  askUserInfo = asks _rcUserInfo
-
-instance HasHttpManager Run where
-  askHttpManager = asks _rcHttpMgr
-
-instance HasSQLGenCtx Run where
-  askSQLGenCtx = asks _rcSqlGenCtx
-
 fetchLastUpdate :: Q.TxE QErr (Maybe (InstanceId, UTCTime))
 fetchLastUpdate = do
   Q.withQE defaultTxErrorHandler
@@ -203,29 +176,17 @@ recordSchemaUpdate instanceId =
              DO UPDATE SET instance_id = $1::uuid, occurred_at = DEFAULT
             |] (Identity instanceId) True
 
-peelRun
-  :: (MonadIO m)
-  => SchemaCache
-  -> RunCtx
-  -> PGExecCtx
-  -> Q.TxAccess
-  -> Run a
-  -> ExceptT QErr m (a, SchemaCache)
-peelRun sc runCtx@(RunCtx userInfo _ _) pgExecCtx txAccess (Run m) =
-  runLazyTx pgExecCtx txAccess $ withUserInfo userInfo lazyTx
-  where
-    lazyTx = runReaderT (runStateT m sc) runCtx
-
 runQuery
   :: (MonadIO m, MonadError QErr m)
   => PGExecCtx -> InstanceId
-  -> UserInfo -> SchemaCache -> HTTP.Manager
-  -> SQLGenCtx -> SystemDefined -> RQLQuery -> m (EncJSON, SchemaCache)
+  -> UserInfo -> RebuildableSchemaCache Run -> HTTP.Manager
+  -> SQLGenCtx -> SystemDefined -> RQLQuery -> m (EncJSON, RebuildableSchemaCache Run)
 runQuery pgExecCtx instanceId userInfo sc hMgr sqlGenCtx systemDefined query = do
   accessMode <- getQueryAccessMode query
   resE <- runQueryM query
     & runHasSystemDefinedT systemDefined
-    & peelRun sc runCtx pgExecCtx accessMode
+    & runCacheRWT sc
+    & peelRun runCtx pgExecCtx accessMode
     & runExceptT
     & liftIO
   either throwError withReload resE
@@ -362,7 +323,8 @@ runQueryM
 runQueryM rq =
   withPathK "args" $ runQueryM' <* rebuildGCtx
   where
-    rebuildGCtx = when (queryNeedsReload rq) buildGCtxMap
+    -- FIXME: rethink this
+    rebuildGCtx = when (queryNeedsReload rq) buildSchemaCache
 
     runQueryM' = case rq of
       RQV1 q -> runQueryV1M q
@@ -377,8 +339,8 @@ runQueryM rq =
       RQTrackFunction q            -> runTrackFunc q
       RQUntrackFunction q          -> runUntrackFunc q
 
-      RQCreateObjectRelationship q -> runCreateObjRel q
-      RQCreateArrayRelationship  q -> runCreateArrRel q
+      RQCreateObjectRelationship q -> runCreateRelationship ObjRel q
+      RQCreateArrayRelationship  q -> runCreateRelationship ArrRel q
       RQDropRelationship  q        -> runDropRel q
       RQSetRelationshipComment  q  -> runSetRelComment q
       RQRenameRelationship q       -> runRenameRel q

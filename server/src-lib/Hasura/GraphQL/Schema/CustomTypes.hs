@@ -3,7 +3,7 @@ module Hasura.GraphQL.Schema.CustomTypes
   , buildCustomTypesSchema
   ) where
 
-import Control.Lens
+import           Control.Lens
 
 import qualified Data.HashMap.Strict           as Map
 import qualified Language.GraphQL.Draft.Syntax as G
@@ -32,7 +32,7 @@ buildObjectTypeInfo roleName annotatedObjectType =
       \(ObjectRelationship name remoteTableInfo _) ->
         if isJust (getSelectPermissionInfoM remoteTableInfo roleName) ||
            roleName == adminRole
-        then Just (relationshipToFieldInfo name $ _tiName remoteTableInfo)
+        then Just (relationshipToFieldInfo name $ remoteTableInfo ^. tiCoreInfo.tciName)
         else Nothing
       where
         relationshipToFieldInfo name remoteTableName =
@@ -68,9 +68,9 @@ buildCustomTypesSchema nonObjectTypeMap annotatedObjectTypes roleName =
       Map.elems annotatedObjectTypes
 
 annotateObjectType
-  :: (CacheRM m, MonadError QErr m)
-  => NonObjectTypeMap -> ObjectTypeDefinition -> m AnnotatedObjectType
-annotateObjectType nonObjectTypeMap objectDefinition = do
+  :: (MonadError QErr m)
+  => TableCache -> NonObjectTypeMap -> ObjectTypeDefinition -> m AnnotatedObjectType
+annotateObjectType tableCache nonObjectTypeMap objectDefinition = do
   annotatedFields <-
     fmap Map.fromList $ forM (toList $ _otdFields objectDefinition) $
     \objectField -> do
@@ -84,8 +84,7 @@ annotateObjectType nonObjectTypeMap objectDefinition = do
     \relationship -> do
       let relationshipName = _orName relationship
           remoteTable = _orRemoteTable relationship
-      remoteTableInfoM <- askTabInfoM remoteTable
-      remoteTableInfo <- onNothing remoteTableInfoM $
+      remoteTableInfo <- onNothing (Map.lookup remoteTable tableCache) $
         throw500 $ "missing table info for: " <>> remoteTable
       annotatedFieldMapping <-
         forM (_orFieldMapping relationship) $ \remoteTableColumn -> do
@@ -114,9 +113,9 @@ annotateObjectType nonObjectTypeMap objectDefinition = do
              VT.showNamedTy typeName
 
 buildCustomTypesSchemaPartial
-  :: (CacheRM m, QErrM m)
-  => CustomTypes -> m (NonObjectTypeMap, AnnotatedObjects)
-buildCustomTypesSchemaPartial customTypes = do
+  :: (QErrM m)
+  => TableCache -> CustomTypes -> m (NonObjectTypeMap, AnnotatedObjects)
+buildCustomTypesSchemaPartial tableCache customTypes = do
   let typeInfos =
         map (VT.TIEnum . convertEnumDefinition) enumDefinitions <>
         -- map (VT.TIObj . convertObjectDefinition) objectDefinitions <>
@@ -126,7 +125,7 @@ buildCustomTypesSchemaPartial customTypes = do
       nonObjectTypeMap = NonObjectTypeMap $ VT.mapFromL VT.getNamedTy typeInfos
 
   annotatedObjectTypes <- VT.mapFromL (_otdName . _aotDefinition) <$>
-    traverse (annotateObjectType nonObjectTypeMap) objectDefinitions
+    traverse (annotateObjectType tableCache nonObjectTypeMap) objectDefinitions
 
   return (nonObjectTypeMap, annotatedObjectTypes)
   where
