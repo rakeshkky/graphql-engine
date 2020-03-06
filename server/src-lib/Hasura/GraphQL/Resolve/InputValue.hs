@@ -90,12 +90,12 @@ asPGColumnTypeAndValueM v = do
       pure (PGColumnEnumReference reference, WithScalarType PGText maybeScalarValue)
     _ -> tyMismatch "pgvalue" v
 
-  for_ (_aivVariable v) $ \variableName -> if
+  for_ (_aivVariable v) $ \(variableName, maybeDefVal) -> if
     -- If the value is a nullable variable, then the caller might make a different decision based on
     -- whether the result is 'Nothing' or 'Just', which would change the generated query, so we have
     -- to unconditionally mark the query non-reusable.
     | G.isNullable (_aivType v) -> markNotReusable
-    | otherwise                 -> recordVariableUse variableName columnType
+    | otherwise                 -> recordVariableUse variableName columnType maybeDefVal
 
   let isVariable = isJust $ _aivVariable v
   pure (columnType, fmap (flip OpaqueValue isVariable) <$> scalarValueM)
@@ -104,7 +104,7 @@ asPGColumnTypeAndAnnValueM
   :: (MonadReusability m, MonadError QErr m) => AnnInpVal -> m (PGColumnType, Maybe OpaquePGValue)
 asPGColumnTypeAndAnnValueM v = do
   (columnType, scalarValueM) <- asPGColumnTypeAndValueM v
-  let mkAnnPGColVal = AnnPGVal (_aivVariable v) (G.isNullable (_aivType v))
+  let mkAnnPGColVal = AnnPGVal (fst <$> _aivVariable v) (G.isNullable (_aivType v))
       replaceOpaqueValue (WithScalarType scalarType (OpaqueValue scalarValue isVariable)) =
         OpaqueValue (mkAnnPGColVal (WithScalarType scalarType scalarValue)) isVariable
   pure (columnType, replaceOpaqueValue <$> sequence scalarValueM)

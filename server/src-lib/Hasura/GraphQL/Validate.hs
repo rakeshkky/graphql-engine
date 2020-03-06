@@ -121,7 +121,7 @@ validateVariablesForReuse (ReusableVariableTypes varTypes) varValsM =
     unless (null unexpectedVars) $
       throwVE $ "unexpected variables: " <> showVars unexpectedVars
 
-    flip Map.traverseWithKey varTypes $ \varName varType ->
+    flip Map.traverseWithKey varTypes $ \varName (varType, maybeDefVal) ->
       withPathK (G.unName $ G.unVariable varName) $ do
         varVal <- onNothing (Map.lookup varName varVals) $
           throwVE "expected a value for non-nullable variable"

@@ -697,13 +697,12 @@ data FragDef
 
 type FragDefMap = Map.HashMap G.Name FragDef
 
-type AnnVarVals =
-  Map.HashMap G.Variable AnnInpVal
+type AnnVarVals = Map.HashMap G.Variable AnnInpVal
 
 data AnnInpVal
   = AnnInpVal
   { _aivType     :: !G.GType
-  , _aivVariable :: !(Maybe G.Variable)
+  , _aivVariable :: !(Maybe (G.Variable, Maybe G.DefaultValue))
   , _aivValue    :: !AnnGValue
   } deriving (Show, Eq)
 
@@ -777,8 +776,11 @@ stripTypenames = map filterExecDef
 
 -- | Used by 'Hasura.GraphQL.Validate.validateVariablesForReuse' to parse new sets of variables for
 -- reusable query plans; see also 'QueryReusability'.
+instance J.ToJSON G.DefaultValue where
+  toJSON = undefined
+
 newtype ReusableVariableTypes
-  = ReusableVariableTypes { unReusableVarTypes :: Map.HashMap G.Variable RQL.PGColumnType }
+  = ReusableVariableTypes { unReusableVarTypes :: Map.HashMap G.Variable (RQL.PGColumnType, Maybe G.DefaultValue) }
   deriving (Show, Eq, Semigroup, Monoid, J.ToJSON)
 type ReusableVariableValues = Map.HashMap G.Variable (WithScalarType PGScalarValue)
 
@@ -813,19 +815,19 @@ instance Monoid QueryReusability where
   mempty = Reusable mempty
 
 class (Monad m) => MonadReusability m where
-  recordVariableUse :: G.Variable -> RQL.PGColumnType -> m ()
+  recordVariableUse :: G.Variable -> RQL.PGColumnType -> Maybe G.DefaultValue -> m ()
   markNotReusable :: m ()
 
 instance (MonadReusability m) => MonadReusability (ReaderT r m) where
-  recordVariableUse a b = lift $ recordVariableUse a b
+  recordVariableUse a b c = lift $ recordVariableUse a b c
   markNotReusable = lift markNotReusable
 
 newtype ReusabilityT m a = ReusabilityT { unReusabilityT :: StateT QueryReusability m a }
   deriving (Functor, Applicative, Monad, MonadError e, MonadReader r, MonadIO)
 
 instance (Monad m) => MonadReusability (ReusabilityT m) where
-  recordVariableUse varName varType = ReusabilityT $
-    modify' (<> Reusable (ReusableVariableTypes $ Map.singleton varName varType))
+  recordVariableUse varName varType maybeDefVal = ReusabilityT $
+    modify' (<> Reusable (ReusableVariableTypes $ Map.singleton varName (varType, maybeDefVal)))
   markNotReusable = ReusabilityT $ put NotReusable
 
 runReusabilityT :: ReusabilityT m a -> m (a, QueryReusability)

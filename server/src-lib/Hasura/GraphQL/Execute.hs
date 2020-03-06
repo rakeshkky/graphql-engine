@@ -198,11 +198,14 @@ getResolvedExecPlan pgExecCtx planCache userInfo sqlGenCtx
   case planM of
     -- plans are only for queries and subscriptions
     Just plan -> (Telem.Hit,) . GExPHasura <$> case plan of
+      -- Cached query
       EP.RPQuery queryPlan -> do
         (tx, genSql) <- EQ.queryOpFromPlan usrVars queryVars queryPlan
         return $ ExOpQuery tx (Just genSql)
       EP.RPSubs subsPlan ->
         ExOpSubs <$> EL.reuseLiveQueryPlan pgExecCtx usrVars queryVars subsPlan
+
+    -- Uncached query
     Nothing -> (Telem.Miss,) <$> noExistingPlan
   where
     GQLReq opNameM queryStr queryVars = reqUnparsed
@@ -211,8 +214,11 @@ getResolvedExecPlan pgExecCtx planCache userInfo sqlGenCtx
       opNameM queryStr plan planCache
     noExistingPlan = do
       req <- toParsed reqUnparsed
-      (partialExecPlan, queryReusability) <- runReusabilityT $
-        getExecPlanPartial userInfo sc enableAL req
+
+      -- Validation happens here
+      (partialExecPlan, queryReusability) <- runReusabilityT $ getExecPlanPartial userInfo sc enableAL req
+
+      -- Execution happens here
       forM partialExecPlan $ \(gCtx, rootSelSet) ->
         case rootSelSet of
           VQ.RMutation selSet ->

@@ -27,7 +27,7 @@ import           Hasura.GraphQL.Validate.Types
 import           Hasura.RQL.Types
 import           Hasura.SQL.Value
 
-newtype P a = P { unP :: Maybe (Either (G.Variable, AnnInpVal) a)}
+newtype P a = P { unP :: Maybe (Either (G.Variable, AnnInpVal, Maybe G.DefaultValue) a)}
 
 pNull :: (Monad m) => m (P a)
 pNull = return $ P Nothing
@@ -38,20 +38,21 @@ pVal = return . P . Just . Right
 resolveVar
   :: ( MonadError QErr m
      , MonadReader ValidationCtx m)
-  => G.Variable -> m AnnInpVal
+  => G.Variable -> m (AnnInpVal, Maybe G.DefaultValue)
 resolveVar var = do
   varVals <- _vcVarVals <$> ask
-  onNothing (Map.lookup var varVals) $
-    throwVE $ "no such variable defined in the operation: "
-    <> showName (G.unVariable var)
+  undefined
+  -- onNothing (Map.lookup var varVals) $
+  --   throwVE $ "no such variable defined in the operation: "
+  --   <> showName (G.unVariable var)
 
 pVar
   :: ( MonadError QErr m
      , MonadReader ValidationCtx m)
   => G.Variable -> m (P a)
 pVar var = do
-  annInpVal <- resolveVar var
-  return . P . Just $ Left (var, annInpVal)
+  (annInpVal, maybeDefValue) <- resolveVar var
+  return . P . Just $ Left (var, annInpVal, maybeDefValue)
 
 data InputValueParser a m
   = InputValueParser
@@ -317,13 +318,13 @@ withParsed expectedTy valParser val fn = do
       else throwVE $ "null value found for non-nullable type: "
            <> G.showGT expectedTy
     Just (Right v)       -> AnnInpVal expectedTy Nothing <$> fn (Just v)
-    Just (Left (var, v)) -> do
+    Just (Left (var, v, maybeDefValue)) -> do
       let varTxt = G.unName $ G.unVariable var
       unless (isTypeAllowed expectedTy $ _aivType v) $
         throwVE $ "variable " <> varTxt
         <> " of type " <> G.showGT (_aivType v)
         <> " is used in position expecting " <> G.showGT expectedTy
-      return $ v { _aivVariable = Just var }
+      return $ v { _aivVariable = Just (var, maybeDefValue) }
   where
     -- is the type 'ofType' allowed at a position of type 'atType'
     -- Examples:
